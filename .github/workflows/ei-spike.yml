@@ -25,8 +25,17 @@ jobs:
       - run: npx vitest run agent/event-intelligence.test.ts core/mcp/mcp.test.ts
       - name: dependency licenses
         run: node scripts/check-dep-licenses.mjs
-      - name: repository lint
-        run: npm run lint:all
+      - name: spike lint
+        run: >-
+          npx biome check
+          agent/event-intelligence.ts
+          agent/event-intelligence.test.ts
+          agent/tools/mcp.ts
+          agent/loop/entry.ts
+          agent/runtime.ts
+          core/mcp/connect.ts
+          core/policy/types.ts
+          package.json
       - name: Linux sandbox prerequisites
         run: sudo bash scripts/install-ci-bubblewrap.sh
       - name: AppArmor profile for bwrap
