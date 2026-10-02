@@ -402,7 +402,10 @@ export async function attachEventIntelligence(
 
   const statuses = await host.mcpStatus();
   const ready = Array.isArray(statuses)
-    ? statuses.filter((row) => object(row)?.status === 'ready').length
+    ? statuses.filter((row) => {
+        const status = object(row);
+        return status?.error == null && Array.isArray(status?.events) && status.events.length > 0;
+      }).length
     : 0;
   return [
     `event-intelligence — attivo, ${connections.length} connessioni MCP condivise, ${ready} Events-capable`,
