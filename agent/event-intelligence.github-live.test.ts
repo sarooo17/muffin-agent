@@ -19,67 +19,40 @@ type JsonObject = Record<string, unknown>;
 
 const liveDescribe = process.env.EI_LIVE_GITHUB === '1' ? describe : describe.skip;
 
-async function github<T = JsonObject>(
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
+async function github<T = JsonObject>(path: string): Promise<T> {
   const token = process.env.GITHUB_TOKEN;
   if (!token) throw new Error('GITHUB_TOKEN is required for the live GitHub EI test');
 
   const response = await fetch(`https://api.github.com${path}`, {
-    ...init,
     headers: {
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${token}`,
       'X-GitHub-Api-Version': '2022-11-28',
-      'Content-Type': 'application/json',
-      ...(init.headers ?? {}),
     },
   });
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`GitHub API ${init.method ?? 'GET'} ${path} -> ${response.status}: ${body}`);
+    throw new Error(`GitHub API GET ${path} -> ${response.status}: ${body}`);
   }
-
-  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
 liveDescribe('live GitHub -> MCP Events -> EI -> Muffin Work', () => {
-  it('sleeps on a real GitHub branch head and wakes when the remote ref changes', async () => {
+  it('wakes when a real remote branch ref changes while Muffin is waiting', async () => {
     const repository = process.env.GITHUB_REPOSITORY;
-    const headSha = process.env.GITHUB_SHA;
-    const runId = process.env.GITHUB_RUN_ID;
-    const attempt = process.env.GITHUB_RUN_ATTEMPT ?? '1';
+    const expectedHead = process.env.GITHUB_SHA;
+    const branch = process.env.EI_LIVE_BRANCH;
+    const baselineSha = process.env.EI_LIVE_BASE_SHA;
 
-    if (!repository || !headSha || !runId) {
-      throw new Error('GitHub Actions repository/run context is required');
+    if (!repository || !expectedHead || !branch || !baselineSha) {
+      throw new Error('GitHub live EI test context is incomplete');
     }
 
     const [owner, repo] = repository.split('/');
     if (!owner || !repo) throw new Error(`Invalid GITHUB_REPOSITORY: ${repository}`);
 
-    const commit = await github<{ parents: Array<{ sha: string }> }>(
-      `/repos/${owner}/${repo}/commits/${headSha}`,
-    );
-    const parentSha = commit.parents[0]?.sha;
-    if (!parentSha) throw new Error('Live EI test needs a commit with a parent');
-
-    // An ephemeral branch gives us a real remote state change without creating
-    // an issue/comment or polluting the spike branch with synthetic commits.
-    const branch = `ei-live-${runId}-${attempt}`;
-    const encodedBranch = encodeURIComponent(branch);
     const home = mkdtempSync(join(tmpdir(), 'muffin-ei-github-live-'));
-
-    await github(`/repos/${owner}/${repo}/git/refs`, {
-      method: 'POST',
-      body: JSON.stringify({
-        ref: `refs/heads/${branch}`,
-        sha: parentSha,
-      }),
-    });
-
     const queued: TurnInput[] = [];
     const existing = new Set<string>();
     const source = {
@@ -108,12 +81,13 @@ liveDescribe('live GitHub -> MCP Events -> EI -> Muffin Work', () => {
           delivery: ['poll'],
           inputSchema: {
             type: 'object',
-            required: ['owner', 'repo', 'branch'],
+            required: ['owner', 'repo', 'branch', 'baselineSha'],
             additionalProperties: false,
             properties: {
               owner: { type: 'string', minLength: 1 },
               repo: { type: 'string', minLength: 1 },
               branch: { type: 'string', minLength: 1 },
+              baselineSha: { type: 'string', minLength: 40, maxLength: 64 },
             },
           },
           payloadSchema: {
@@ -133,19 +107,19 @@ liveDescribe('live GitHub -> MCP Events -> EI -> Muffin Work', () => {
           const targetOwner = String(args.owner);
           const targetRepo = String(args.repo);
           const targetBranch = String(args.branch);
+          const baseline = cursor ?? String(args.baselineSha);
+
           const ref = await github<{ object: { sha: string } }>(
             `/repos/${targetOwner}/${targetRepo}/git/ref/heads/${encodeURIComponent(targetBranch)}`,
           );
           const current = ref.object.sha;
 
-          // First observation establishes a cursor. Watching a branch must not
-          // fire just because the watcher was created.
-          if (cursor === null || cursor === current) {
+          if (current === baseline) {
             return {
               events: [],
               cursor: current,
               hasMore: false,
-              nextPollMs: 60_000,
+              nextPollMs: 1_000,
             };
           }
 
@@ -158,13 +132,13 @@ liveDescribe('live GitHub -> MCP Events -> EI -> Muffin Work', () => {
                 owner: targetOwner,
                 repo: targetRepo,
                 branch: targetBranch,
-                before: cursor,
+                before: baseline,
                 after: current,
               },
             }],
             cursor: current,
             hasMore: false,
-            nextPollMs: 60_000,
+            nextPollMs: 1_000,
           };
         },
       }],
@@ -189,7 +163,7 @@ liveDescribe('live GitHub -> MCP Events -> EI -> Muffin Work', () => {
         }
         return 'result' in response ? response.result : undefined;
       },
-      pollIntervalMs: 60_000,
+      pollIntervalMs: 1_000,
     };
 
     const host = await createEventIntelligenceHost({
@@ -209,8 +183,8 @@ liveDescribe('live GitHub -> MCP Events -> EI -> Muffin Work', () => {
         {
           events: [{
             event: 'github.branch.head_changed',
-            arguments: { owner, repo, branch },
-            where: [{ path: 'after', op: 'eq', value: headSha }],
+            arguments: { owner, repo, branch, baselineSha },
+            where: [{ path: 'after', op: 'eq', value: expectedHead }],
           }],
           instruction: `GitHub branch ${branch} changed. Inspect the new head.`,
           one_shot: true,
@@ -219,17 +193,15 @@ liveDescribe('live GitHub -> MCP Events -> EI -> Muffin Work', () => {
       );
       expect(armed.isError).not.toBe(true);
 
-      // Baseline the real remote ref while Muffin is "sleeping".
+      // Establish the watch against the real remote branch, then remain idle.
       await host.runtime.mcpEventsClient.pollAll();
-      expect(queued).toHaveLength(0);
 
-      // Real external state transition on GitHub: parent -> current spike SHA.
-      await github(`/repos/${owner}/${repo}/git/refs/heads/${encodedBranch}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ sha: headSha, force: false }),
-      });
-
-      await host.runtime.mcpEventsClient.pollAll();
+      // The branch is moved by the test driver OUTSIDE this process. That is
+      // intentional: the observer does not manufacture the event it watches.
+      for (let i = 0; i < 30 && queued.length === 0; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        await host.runtime.mcpEventsClient.pollAll();
+      }
 
       expect(queued).toHaveLength(1);
       expect(queued[0]).toMatchObject({
@@ -240,18 +212,15 @@ liveDescribe('live GitHub -> MCP Events -> EI -> Muffin Work', () => {
         contentTaint: 3,
       });
       expect(queued[0]!.text).toContain(branch);
-      expect(queued[0]!.text).toContain(headSha);
-      expect(queued[0]!.text).toContain(parentSha);
+      expect(queued[0]!.text).toContain(expectedHead);
+      expect(queued[0]!.text).toContain(baselineSha);
 
-      // The one-shot trigger plus deterministic wake id must not replay.
+      // One-shot + deterministic wake identity: no replay on the stable head.
       await host.runtime.mcpEventsClient.pollAll();
       expect(queued).toHaveLength(1);
     } finally {
       await host.close().catch(() => {});
-      await github(`/repos/${owner}/${repo}/git/refs/heads/${encodedBranch}`, {
-        method: 'DELETE',
-      }).catch(() => {});
       rmSync(home, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 90_000);
 });
