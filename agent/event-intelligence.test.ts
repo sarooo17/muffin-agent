@@ -1,12 +1,17 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import {
+  createEventIntelligenceHost,
+  createMcpRegistryAdapter,
+} from 'mcp-event-intelligence/host';
 import { toolContext } from './fixtures/tool-context.js';
 import type { LoopDeps, RegisteredTool, TurnInput } from './loop.js';
 import {
   attachEventIntelligence,
   deliverEventWake,
+  makeEventIntelligenceTools,
   workIdForEventWake,
   type EventWakePort,
 } from './event-intelligence.js';
@@ -149,6 +154,126 @@ describe('embedded EI on Muffin-owned MCP sessions', () => {
       expect(created.content).toContain('event watch armed');
     } finally {
       for (const close of closeHooks) await close();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+
+describe('MCP event -> EI match -> Muffin Work E2E', () => {
+  it('sleeps on a persisted condition and wakes exactly one canonical Muffin Turn when the event arrives', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'muffin-ei-e2e-'));
+    const queued: TurnInput[] = [];
+    const existing = new Set<string>();
+    const source = {
+      id: 'source-turn',
+      tenant: 'host',
+      surface: 'telegram',
+      sessionId: 'owner',
+      replyTo: { chatId: '42' },
+    };
+    const port: EventWakePort = {
+      source: (id) => (id === source.id ? source : null),
+      has: (id) => existing.has(id),
+      openSession: (id) => ({ id, file: join(home, `${id}.jsonl`) }),
+      enqueue: (input) => {
+        queued.push(input);
+        existing.add(input.id!);
+        return input.id!;
+      },
+    };
+
+    let delivered = false;
+    const connection = {
+      connectionId: 'demo',
+      serverId: 'demo',
+      getCapabilities: () => ({
+        extensions: { 'io.modelcontextprotocol/events': {} },
+      }),
+      request: async (method: string, params?: unknown) => {
+        if (method === 'events/list') {
+          return {
+            events: [{
+              name: 'demo.ready',
+              description: 'A demo item became ready.',
+              delivery: ['poll'],
+              inputSchema: { type: 'object' },
+              payloadSchema: {
+                type: 'object',
+                properties: { value: { type: 'number' } },
+              },
+            }],
+            nextCursor: null,
+          };
+        }
+        if (method === 'events/poll') {
+          if (!delivered) {
+            delivered = true;
+            return {
+              events: [{
+                eventId: 'event-1',
+                name: 'demo.ready',
+                timestamp: '2026-10-02T20:00:00.000Z',
+                data: { value: 42 },
+              }],
+              cursor: 'done',
+              hasMore: false,
+              nextPollMs: 60_000,
+            };
+          }
+          return {
+            events: [],
+            cursor: 'done',
+            hasMore: false,
+            nextPollMs: 60_000,
+          };
+        }
+        throw new Error(`unexpected method ${method} ${JSON.stringify(params)}`);
+      },
+      pollIntervalMs: 60_000,
+    };
+
+    const host = await createEventIntelligenceHost({
+      dataDir: join(home, 'ei'),
+      mcpRegistry: createMcpRegistryAdapter({
+        listConnections: () => [connection],
+      }),
+      wake: (packet, activation) => deliverEventWake(port, packet, activation),
+    });
+
+    try {
+      const create = makeEventIntelligenceTools(host)
+        .find((tool) => tool.spec.name === 'event_watch_create')!;
+      const armed = await create.handler(
+        {
+          events: [{
+            event: 'demo.ready',
+            where: [{ path: 'value', op: 'gt', value: 10 }],
+          }],
+          instruction: 'Inspect the matched demo event.',
+          one_shot: true,
+        },
+        toolContext({ turnId: source.id }),
+      );
+      expect(armed.isError).not.toBe(true);
+      expect(queued).toEqual([]);
+
+      await host.runtime.mcpEventsClient.pollAll();
+      expect(queued).toHaveLength(1);
+      expect(queued[0]).toMatchObject({
+        principal: { kind: 'system', source: 'event-intelligence' },
+        tenant: 'host',
+        surface: 'telegram',
+        replyTo: { chatId: '42' },
+        contentTaint: 3,
+      });
+      expect(queued[0]!.text).toContain('Inspect the matched demo event.');
+      expect(queued[0]!.text).toContain('"value": 42');
+
+      await host.runtime.mcpEventsClient.pollAll();
+      expect(queued).toHaveLength(1);
+    } finally {
+      await host.close();
       rmSync(home, { recursive: true, force: true });
     }
   });
