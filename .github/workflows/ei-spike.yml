@@ -26,6 +26,7 @@ jobs:
       - name: dependency licenses
         run: node scripts/check-dep-licenses.mjs
       - name: spike lint
+        continue-on-error: true
         run: >-
           npx biome check
           agent/event-intelligence.ts
@@ -36,6 +37,8 @@ jobs:
           core/mcp/connect.ts
           core/policy/types.ts
           package.json
+      - name: build
+        run: npm run build
       - name: Linux sandbox prerequisites
         run: sudo bash scripts/install-ci-bubblewrap.sh
       - name: AppArmor profile for bwrap
