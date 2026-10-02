@@ -23,3 +23,26 @@ jobs:
       - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
       - run: npx vitest run agent/event-intelligence.test.ts core/mcp/mcp.test.ts
+      - name: dependency licenses
+        run: node scripts/check-dep-licenses.mjs
+      - name: repository lint
+        run: npm run lint:all
+      - name: Linux sandbox prerequisites
+        run: sudo bash scripts/install-ci-bubblewrap.sh
+      - name: AppArmor profile for bwrap
+        run: |
+          sudo tee /etc/apparmor.d/bwrap > /dev/null <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/bwrap>
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+      - name: full Muffin suite
+        env:
+          MUFFIN_REQUIRE_SANDBOX: '1'
+          MUFFIN_REQUIRE_SYSTEMD: '1'
+        run: npx vitest run --reporter=dot
