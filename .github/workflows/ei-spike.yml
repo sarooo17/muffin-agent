@@ -6,7 +6,9 @@ on:
       - slice/event-intelligence-spike
 
 permissions:
-  contents: read
+  # The live GitHub validation creates one ephemeral branch in this fork,
+  # fast-forwards it once, then deletes it in a finally block.
+  contents: write
 
 jobs:
   spike:
@@ -23,6 +25,11 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npx vitest run agent/event-intelligence.test.ts core/mcp/mcp.test.ts
+      - name: live GitHub MCP Events wake
+        env:
+          EI_LIVE_GITHUB: '1'
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx vitest run agent/event-intelligence.github-live.test.ts --reporter=verbose
       - name: dependency licenses
         run: node scripts/check-dep-licenses.mjs
       - name: spike lint
@@ -31,6 +38,7 @@ jobs:
           npx biome check
           agent/event-intelligence.ts
           agent/event-intelligence.test.ts
+          agent/event-intelligence.github-live.test.ts
           agent/tools/mcp.ts
           agent/loop/entry.ts
           agent/runtime.ts
