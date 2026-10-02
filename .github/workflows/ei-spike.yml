@@ -20,7 +20,7 @@ jobs:
           cache: npm
       # The spike intentionally does not touch the canonical lockfile until the
       # integration compiles and the E2E seam is proven.
-      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npx vitest run agent/event-intelligence.test.ts core/mcp/mcp.test.ts
       - name: dependency licenses
