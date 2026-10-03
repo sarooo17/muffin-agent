@@ -141,7 +141,7 @@ async function main(): Promise<void> {
       response: first.text,
     });
 
-    let delivered: { turnId: string; text: string } | null = null;
+    const delivery: { value: { turnId: string; text: string } | null } = { value: null };
     const laneEvents: Array<Record<string, unknown>> = [];
     const lane = new TurnLane({
       turns: runtime.deps.turns,
@@ -149,7 +149,7 @@ async function main(): Promise<void> {
       run: makeLaneRunner(
         runtime.deps,
         async (turn, text) => {
-          delivered = { turnId: turn.id, text };
+          delivery.value = { turnId: turn.id, text };
         },
         (event) => laneEvents.push(event as unknown as Record<string, unknown>),
       ),
@@ -157,11 +157,12 @@ async function main(): Promise<void> {
     });
 
     const deadline = Date.now() + TIMEOUT_MS;
-    while (Date.now() < deadline && delivered === null) {
+    while (Date.now() < deadline && delivery.value === null) {
       lane.tick(new Date());
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
+    const delivered = delivery.value;
     if (delivered === null) {
       throw new Error(`timed out waiting for EI wake/model reply after ${TIMEOUT_MS}ms`);
     }
