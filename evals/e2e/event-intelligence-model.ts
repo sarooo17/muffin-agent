@@ -3,6 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInit } from '../../cli/init.js';
+import { loadConfig, saveConfig } from '../../core/config/config.js';
 import { runTurn } from '../../agent/loop.js';
 import { attachMcp, buildRuntime } from '../../agent/runtime.js';
 import { makeLaneRunner } from '../../agent/turn-lane.js';
@@ -72,6 +73,20 @@ async function main(): Promise<void> {
       mainModel: MODEL,
       lightModel: MODEL,
     });
+
+    // Current OpenAI Chat Completions rejects function tools while reasoning is
+    // active for this model, but explicitly supports the same request with
+    // reasoning_effort=none. Exercise Muffin's existing owner override rather
+    // than changing the provider architecture for an EI integration spike.
+    const config = loadConfig(home);
+    saveConfig({
+      ...config,
+      thinking: 'off',
+      provider: {
+        ...config.provider,
+        reasoningDialect: 'reasoning_effort',
+      },
+    }, home);
 
     // Pin the exact real MCP stdio server definition before Muffin attaches it,
     // using the same allowlist/rug-pull path as a normal install.
