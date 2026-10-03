@@ -1,0 +1,54 @@
+name: EI spike
+
+on:
+  push:
+    branches:
+      - slice/event-intelligence-spike
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npx vitest run agent/event-intelligence.test.ts core/mcp/mcp.test.ts
+      - name: dependency licenses
+        run: node scripts/check-dep-licenses.mjs
+      - name: spike lint
+        run: >-
+          npx biome check
+          agent/event-intelligence.ts
+          agent/event-intelligence.test.ts
+          agent/event-intelligence.mcp-transport-live.test.ts
+          core/mcp/fixtures/github-events-server.mjs
+          package.json
+      - name: build
+        run: npm run build
+      - name: Linux sandbox prerequisites
+        run: sudo bash scripts/install-ci-bubblewrap.sh
+      - name: AppArmor profile for bwrap
+        run: |
+          sudo tee /etc/apparmor.d/bwrap > /dev/null <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+            include if exists <local/bwrap>
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+      - name: full Muffin suite
+        env:
+          MUFFIN_REQUIRE_SANDBOX: '1'
+          MUFFIN_REQUIRE_SYSTEMD: '1'
+        run: npx vitest run --reporter=dot

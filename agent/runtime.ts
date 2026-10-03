@@ -1574,6 +1574,22 @@ export async function attachMcp(runtime: Runtime, home = paths().home): Promise<
       .sort((a, b) => a.spec.name.localeCompare(b.spec.name));
     for (const t of tool) runtime.register(t, decl);
   }
+  const report = [...attachment.report];
+
+  // Experimental fork-only spike. Nothing changes on normal Muffin installs,
+  // and EI never owns MCP credentials: it receives the already-verified
+  // sessions above. Keep the feature behind an explicit flag until the
+  // architecture is discussed upstream.
+  if (process.env.MUFFIN_EVENT_INTELLIGENCE === '1') {
+    try {
+      const { attachEventIntelligence } = await import('./event-intelligence.js');
+      report.push(...(await attachEventIntelligence(runtime, attachment.eventConnections, home)));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      report.push(`event-intelligence — attach fallito: ${detail}`);
+    }
+  }
+
   runtime.onClose(() => attachment.close());
-  return attachment.report;
+  return report;
 }

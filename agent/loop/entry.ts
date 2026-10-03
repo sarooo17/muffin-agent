@@ -67,7 +67,10 @@ import {
  */
 export function enqueueTurn(deps: LoopDeps, input: TurnInput): string {
   deps.prepareTurn?.();
-  const id = randomBytes(16).toString('hex');
+  // External durable ingress (for example Event Intelligence wakes) can carry
+  // a stable occurrence id. Honouring it here makes enqueue exactly-once by
+  // the same primary key that already protects every other Turn.
+  const id = input.id ?? randomBytes(16).toString('hex');
   deps.turns.enqueue({
     id,
     principal: input.principal,

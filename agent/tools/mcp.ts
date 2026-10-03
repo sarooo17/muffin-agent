@@ -50,9 +50,24 @@ export function mcpCapabilityFor(server: string): CapabilityDecl {
   };
 }
 
+export type McpEventConnection = {
+  connectionId: string;
+  serverId: string;
+  request(method: string, params?: unknown): Promise<unknown>;
+  getCapabilities(): unknown;
+  /** Optional tuning knobs used by the EI host; normal Muffin connections use EI defaults. */
+  pollIntervalMs?: number;
+  maxEvents?: number;
+};
+
 export type McpAttachment = {
   tools: RegisteredTool[];
   capabilities: CapabilityDecl[];
+  /**
+   * Verified host-owned MCP sessions. Event Intelligence receives this view
+   * instead of reconnecting to the same provider with duplicate credentials.
+   */
+  eventConnections: McpEventConnection[];
   /** One line per server: connected with N tools, suspended with the reason, or failed. */
   report: string[];
   close(): Promise<void>;
@@ -69,6 +84,7 @@ export async function buildMcpTools(registry: McpRegistry, deps: McpDeps = {}): 
   const capabilities: CapabilityDecl[] = [];
   const report: string[] = [];
   const connections: McpConnection[] = [];
+  const eventConnections: McpEventConnection[] = [];
 
   for (const [server, entry] of Object.entries(registry.servers)) {
     let connection: McpConnection;
@@ -100,6 +116,14 @@ export async function buildMcpTools(registry: McpRegistry, deps: McpDeps = {}): 
     }
 
     connections.push(connection);
+    if (connection.request !== undefined && connection.getCapabilities !== undefined) {
+      eventConnections.push({
+        connectionId: server,
+        serverId: server,
+        request: connection.request,
+        getCapabilities: connection.getCapabilities,
+      });
+    }
     capabilities.push(mcpCapabilityFor(server));
 
     for (const def of connection.tools) {
@@ -154,6 +178,7 @@ export async function buildMcpTools(registry: McpRegistry, deps: McpDeps = {}): 
   return {
     tools,
     capabilities,
+    eventConnections,
     report,
     async close() {
       await Promise.allSettled(connections.map((c) => c.close()));
