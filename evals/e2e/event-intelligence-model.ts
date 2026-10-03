@@ -91,6 +91,13 @@ async function main(): Promise<void> {
     runtime = buildRuntime(home, workspace, { extraDenyRead: [homedir()] });
     runtime.consolidation.stop();
 
+    // This is an operational E2E, not Muffin's onboarding eval. A brand-new
+    // home deliberately activates the "first encounter" prompt, which asks the
+    // model to introduce itself and can dominate a one-shot automation request.
+    // Pretend canonical memory already has context so we exercise the normal
+    // owner-turn behaviour without writing fake personal facts to the database.
+    runtime.memory.store.hasActiveFacts = () => true;
+
     const attachReport = await attachMcp(runtime, home);
     const exposure = runtime.recomputeExposure();
     if (attachReport.some((line) => line.includes('attach fallito'))) {
@@ -106,11 +113,13 @@ async function main(): Promise<void> {
       branch: BRANCH,
       attachReport,
       exposure,
+      tools: runtime.deps.tools.map((tool) => tool.spec.name),
     });
 
     const session = runtime.deps.sessions.open('ei-model-e2e');
     const prompt =
       `Avvisami quando cambia l'HEAD del branch "${BRANCH}" del repo "${REPOSITORY}". ` +
+      'Configura davvero questa attesa usando gli strumenti disponibili, senza limitarti a promettere che lo farai. ' +
       'Non serve controllarlo continuamente con il modello: aspetta il cambiamento e dimmelo quando succede.';
 
     const first = await runTurn(runtime.deps, {
@@ -127,6 +136,13 @@ async function main(): Promise<void> {
       capability: call.capability,
       isError: call.isError,
     }));
+    safeLine('EI_MODEL_E2E_FIRST_TURN', {
+      turnId: first.turnId,
+      stopped: first.stopped,
+      toolCalls: firstCalls,
+      response: first.text,
+    });
+
     const createdWatch = firstCalls.some((call) => call.tool === 'event_watch_create');
     if (!createdWatch) {
       throw new Error(
