@@ -18,18 +18,15 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      # The spike intentionally does not touch the canonical lockfile until the
-      # integration compiles and the E2E seam is proven.
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npx vitest run agent/event-intelligence.test.ts core/mcp/mcp.test.ts
-      - name: live GitHub MCP Events wake
+      - name: live GitHub over real MCP stdio transport
         env:
-          EI_LIVE_GITHUB: '1'
+          EI_LIVE_GITHUB_TRANSPORT: '1'
           EI_LIVE_BRANCH: 'ei-live-fixture'
-          EI_LIVE_BASE_SHA: 'b64a44f3b93168c3bf0143a3df5ad839fffd851e'
-          GITHUB_TOKEN: ${{ github.token }}
-        run: npx vitest run agent/event-intelligence.github-live.test.ts --reporter=verbose
+          EI_LIVE_BASE_SHA: 'f81d17b246ae2fd7d900798282c6fee57842ddb0'
+        run: npx vitest run agent/event-intelligence.mcp-transport-live.test.ts --reporter=verbose
       - name: dependency licenses
         run: node scripts/check-dep-licenses.mjs
       - name: spike lint
@@ -38,7 +35,8 @@ jobs:
           npx biome check
           agent/event-intelligence.ts
           agent/event-intelligence.test.ts
-          agent/event-intelligence.github-live.test.ts
+          agent/event-intelligence.mcp-transport-live.test.ts
+          core/mcp/fixtures/github-events-server.mjs
           agent/tools/mcp.ts
           agent/loop/entry.ts
           agent/runtime.ts
