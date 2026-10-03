@@ -21,7 +21,7 @@ const provider = createMcpEventsProvider({
         delivery: ['poll'],
         inputSchema: {
           type: 'object',
-          required: ['owner', 'repo', 'branch', 'baselineSha'],
+          required: ['owner', 'repo', 'branch'],
           additionalProperties: false,
           properties: {
             owner: { type: 'string', minLength: 1 },
@@ -47,7 +47,10 @@ const provider = createMcpEventsProvider({
         const owner = String(args.owner);
         const repo = String(args.repo);
         const branch = String(args.branch);
-        const baseline = cursor ?? String(args.baselineSha);
+        const requestedBaseline =
+          typeof args.baselineSha === 'string' && args.baselineSha.length > 0
+            ? args.baselineSha
+            : null;
         const response = await fetch(
           `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`,
           {
@@ -68,7 +71,20 @@ const provider = createMcpEventsProvider({
           throw new Error('GitHub ref response did not contain object.sha');
         }
 
-        if (current === baseline) {
+        // A natural-language watch does not know a SHA. Its first poll is a
+        // baseline observation, never an event. Tests that need a deterministic
+        // baseline may still pass baselineSha explicitly.
+        if (cursor === null && requestedBaseline === null) {
+          return {
+            events: [],
+            cursor: current,
+            hasMore: false,
+            nextPollMs: 1_000,
+          };
+        }
+
+        const baseline = cursor ?? requestedBaseline;
+        if (baseline === null || current === baseline) {
           return {
             events: [],
             cursor: current,
