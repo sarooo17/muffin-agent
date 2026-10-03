@@ -91,6 +91,23 @@ async function main(): Promise<void> {
     runtime = buildRuntime(home, workspace, { extraDenyRead: [homedir()] });
     runtime.consolidation.stop();
 
+    // The normal turn path intentionally hides upstream provider text from the
+    // user. This E2E is a private diagnostic, so surface the typed provider
+    // error message (never headers or credentials) before the loop converts it
+    // into its generic HTTP-status reply.
+    const provider = runtime.deps.provider;
+    const originalChat = provider.chat.bind(provider);
+    provider.chat = async (call) => {
+      try {
+        return await originalChat(call);
+      } catch (error) {
+        safeLine('EI_MODEL_E2E_PROVIDER_ERROR', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    };
+
     // This is an operational E2E, not Muffin's onboarding eval. A brand-new
     // home deliberately activates the "first encounter" prompt, which asks the
     // model to introduce itself and can dominate a one-shot automation request.
