@@ -128,6 +128,23 @@ export function speaksReasoningEffort(baseURL?: string): boolean {
 }
 
 /**
+ * OpenAI's current Chat Completions models reject the legacy `max_tokens`
+ * parameter and require `max_completion_tokens`. Keep that dialect scoped to
+ * the official OpenAI endpoint: generic OpenAI-compatible servers often still
+ * implement only `max_tokens`, and this adapter exists precisely for them.
+ *
+ * No explicit base URL means the OpenAI SDK's own default, api.openai.com.
+ */
+export function usesMaxCompletionTokens(baseURL?: string): boolean {
+  if (baseURL === undefined || baseURL === '') return true;
+  try {
+    return new URL(baseURL).hostname.toLowerCase().replace(/\.$/, '') === 'api.openai.com';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * What an owner-declared `reasoning_effort` dialect promises: reasoning can be
  * switched off and given a level. No `supportedEfforts` on purpose — the levels
  * differ per server and model (`xhigh` is legal on one vLLM, `high` a 400), so
@@ -560,7 +577,9 @@ export class OpenAICompatProvider implements Provider {
         : baseRouting;
     return {
       model: call.model,
-      max_tokens: call.maxOutputTokens,
+      ...(usesMaxCompletionTokens(this.baseURL)
+        ? { max_completion_tokens: call.maxOutputTokens }
+        : { max_tokens: call.maxOutputTokens }),
       // Absent stays absent. Local servers want temperature 0 and get it;
       // a gateway fronting a model that removed sampling gets no field at
       // all rather than a `temperature: undefined` some strict parser will
