@@ -17,7 +17,7 @@ import { ModelLane } from '../../core/turns/model-lane.js';
 
 const OWNER = { kind: 'owner', connector: 'cli', externalId: 'local' } as const;
 const TENANT = 'host';
-const MODEL = process.env.EI_E2E_MODEL ?? 'gpt-5.6-luna';
+const MODEL = process.env.EI_E2E_MODEL ?? 'gpt-6-luna';
 const REPOSITORY = process.env.EI_E2E_REPOSITORY ?? 'sarooo17/muffin-agent';
 const BRANCH = process.env.EI_E2E_BRANCH ?? 'ei-model-e2e-fixture';
 const TIMEOUT_MS = Number(process.env.EI_E2E_TIMEOUT_MS ?? 180_000);
