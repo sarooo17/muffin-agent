@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OpenAICompatProvider, wantsExplicitCache } from './openai-compat.js';
+import { OpenAICompatProvider, usesMaxCompletionTokens, wantsExplicitCache } from './openai-compat.js';
 import { ProviderError, ProviderStreamError, type ChatCall, type StreamEvent } from './types.js';
 
 /**
@@ -62,6 +62,33 @@ const CALL: ChatCall = {
 
 type SystemPart = { type: string; text: string; cache_control?: { type: string } };
 type Body = { messages: { role: string; content: string | SystemPart[] }[] };
+
+describe('OpenAI completion-token dialect', () => {
+  it('uses max_completion_tokens only for the official OpenAI endpoint', () => {
+    expect(usesMaxCompletionTokens()).toBe(true);
+    expect(usesMaxCompletionTokens('https://api.openai.com/v1')).toBe(true);
+    expect(usesMaxCompletionTokens('https://api.openai.com./v1')).toBe(true);
+    expect(usesMaxCompletionTokens('https://openrouter.ai/api/v1')).toBe(false);
+    expect(usesMaxCompletionTokens('http://localhost:11434/v1')).toBe(false);
+  });
+
+  it('puts the requested output ceiling on the official OpenAI wire with the current field name', async () => {
+    const bodies: unknown[] = [];
+    const provider = new OpenAICompatProvider('sk-test', undefined, {}, {
+      discoverReasoning: false,
+      fetch: (async (_url: unknown, init?: { body?: string }) => {
+        bodies.push(JSON.parse(init?.body ?? '{}'));
+        return new Response(JSON.stringify({ ...A_COMPLETION, model: 'gpt-5.6-sol' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }) as never,
+    });
+    await provider.chat({ ...CALL, model: 'gpt-5.6-sol' });
+    expect(bodies[0]).toMatchObject({ max_completion_tokens: 100 });
+    expect(bodies[0]).not.toHaveProperty('max_tokens');
+  });
+});
 
 describe('wantsExplicitCache · the endpoint decides, and the default is the decision', () => {
   it('defaults from the endpoint, so a caller that forgets the flag cannot silently pay full price', () => {
