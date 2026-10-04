@@ -7,10 +7,7 @@ import {
   type EventActivation,
   type PortableAgentTool,
 } from 'mcp-event-intelligence/embedded';
-import type {
-  EventIntelligenceHost,
-  HostWakeReceipt,
-} from 'mcp-event-intelligence/host';
+import type { EventIntelligenceHost, HostWakeReceipt } from 'mcp-event-intelligence/host';
 import { fence } from '../core/memory/spotlight.js';
 import type { CapabilityDecl } from '../core/policy/types.js';
 import type { SessionRef } from '../core/session/store.js';
@@ -86,10 +83,7 @@ function renderWakeText(activation: EventActivation): string {
     activation.continuation?.instruction ??
     'Review the matched event condition and decide what, if anything, should happen next.';
   const evidence = JSON.stringify(activation.evidence, null, 2);
-  const bounded =
-    evidence.length > 30_000
-      ? `${evidence.slice(0, 30_000)}\n[truncated]`
-      : evidence;
+  const bounded = evidence.length > 30_000 ? `${evidence.slice(0, 30_000)}\n[truncated]` : evidence;
   const wrapped = fence(
     'event',
     bounded,
@@ -145,23 +139,16 @@ export async function deliverEventWake(
   }
   const dispatch = createActivationDispatcher(activationDelivery(port));
   const receipt = await dispatch(packet, activationInput);
-  return typeof receipt === 'string'
-    ? { runtimeReceiptId: receipt }
-    : receipt;
+  return typeof receipt === 'string' ? { runtimeReceiptId: receipt } : receipt;
 }
 
 function principalFingerprint(ctx: ToolContext): string {
-  return createHash('sha256')
-    .update(JSON.stringify(ctx.principal))
-    .digest('hex')
-    .slice(0, 24);
+  return createHash('sha256').update(JSON.stringify(ctx.principal)).digest('hex').slice(0, 24);
 }
 
 function resolvePortableContext(ctx: ToolContext) {
   if (ctx.principal.kind !== 'owner') {
-    const error = new Error(
-      'event watches are owner-only in this experimental integration',
-    );
+    const error = new Error('event watches are owner-only in this experimental integration');
     (error as Error & { code?: string }).code = 'EVENT_WATCH_OWNER_REQUIRED';
     throw error;
   }
@@ -187,25 +174,17 @@ function portableToolOptions() {
       create: 'event_watch_create',
     },
     resolveContext: (ctx: ToolContext) => resolvePortableContext(ctx),
-    authorize: ({
-      runtimeContext,
-    }: {
-      runtimeContext: ToolContext;
-    }) => ({
+    authorize: ({ runtimeContext }: { runtimeContext: ToolContext }) => ({
       allowed: runtimeContext.principal.kind === 'owner',
       confirmationId: `muffin-policy:${runtimeContext.turnId}`,
     }),
   };
 }
 
-function adaptPortableTool(
-  tool: PortableAgentTool<ToolContext>,
-): RegisteredTool {
+function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool {
   const sources = tool.name === 'event_watch_sources';
   return {
-    capability: sources
-      ? eventSourcesCapability.id
-      : eventTriggerCapability.id,
+    capability: sources ? eventSourcesCapability.id : eventTriggerCapability.id,
     spec: {
       name: tool.name,
       description: tool.description,
@@ -216,8 +195,7 @@ function adaptPortableTool(
     handler: async (args, ctx) => {
       const result = await tool.execute(args, ctx);
       if (!result.ok) {
-        const detail =
-          result.error?.message ?? 'Event Intelligence tool failed';
+        const detail = result.error?.message ?? 'Event Intelligence tool failed';
         if (!sources && result.error?.code === 'EVENT_WATCH_OWNER_REQUIRED') {
           return { content: detail, isError: true, tier: CLEAN };
         }
@@ -250,9 +228,7 @@ function adaptPortableTool(
   };
 }
 
-export function makeEventIntelligenceTools(
-  host: EventIntelligenceHost,
-): RegisteredTool[] {
+export function makeEventIntelligenceTools(host: EventIntelligenceHost): RegisteredTool[] {
   return createEventIntelligenceAgentTools({
     host,
     ...portableToolOptions(),
@@ -295,11 +271,7 @@ export async function attachEventIntelligence(
     ? statuses.filter((row) => {
         if (!row || typeof row !== 'object') return false;
         const status = row as Record<string, unknown>;
-        return (
-          status.error == null &&
-          Array.isArray(status.events) &&
-          status.events.length > 0
-        );
+        return status.error == null && Array.isArray(status.events) && status.events.length > 0;
       }).length
     : 0;
   return [
