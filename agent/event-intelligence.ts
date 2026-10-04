@@ -138,8 +138,11 @@ function activationDelivery(port: EventWakePort) {
 export async function deliverEventWake(
   port: EventWakePort,
   packet: Record<string, unknown>,
-  activationInput: EventActivation,
+  activationInput: EventActivation | undefined,
 ): Promise<HostWakeReceipt> {
+  if (!activationInput) {
+    throw new Error('Event Intelligence wake is missing its activation envelope');
+  }
   const dispatch = createActivationDispatcher(activationDelivery(port));
   const receipt = await dispatch(packet, activationInput);
   return typeof receipt === 'string'
