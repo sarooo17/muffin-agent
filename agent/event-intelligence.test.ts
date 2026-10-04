@@ -141,11 +141,7 @@ describe('Event Intelligence wake -> Muffin Work', () => {
       },
     };
     await expect(
-      deliverEventWake(
-        port,
-        { wakeId: 'wake-1' },
-        activationFor('gone'),
-      ),
+      deliverEventWake(port, { wakeId: 'wake-1' }, activationFor('gone')),
     ).rejects.toThrow(/Continuation target unavailable/);
   });
 });
