@@ -13,13 +13,84 @@ import {
 import { toolContext } from './fixtures/tool-context.js';
 import type { LoopDeps, RegisteredTool, TurnInput } from './loop.js';
 
+function activationFor(
+  targetId: string,
+  instruction = 'Inspect the release.',
+  evidence = [{ eventId: 'e1', data: { status: 'green' } }],
+) {
+  return {
+    activationVersion: '2' as const,
+    wake: {
+      wakeId: 'wake-1',
+      status: 'queued',
+      runtimeReceiptId: null,
+      matchedAt: '2026-10-04T00:00:00.000Z',
+    },
+    target: { runtime: 'muffin', kind: 'task', id: targetId },
+    trigger: {
+      triggerId: 'trigger-1',
+      version: '1',
+      description: null,
+      pattern: {
+        version: '2' as const,
+        root: { kind: 'event' as const, ref: 'event_1' },
+        partitionBy: [],
+        selection: {
+          overlap: 'disallow' as const,
+          afterMatch: 'skipPastLast' as const,
+          maxMatchesPerEvent: 10,
+        },
+        execution: {
+          maxCandidates: 512,
+          maxSemanticEvaluations: 16,
+          maxBufferedEvents: 10000,
+        },
+      },
+      lifecycle: {
+        oneShot: true,
+        cooldownMs: 0,
+        completeOnGoal: false,
+      },
+    },
+    continuation: {
+      instruction,
+      contextPolicy: {
+        evidence: 'matched_events' as const,
+        maxEvents: 20,
+        includeData: true,
+      },
+    },
+    match: {
+      matchId: 'match-1',
+      status: 'matched',
+      partitionKey: null,
+      openedAt: '2026-10-04T00:00:00.000Z',
+      updatedAt: '2026-10-04T00:00:00.000Z',
+    },
+    evidence: evidence.map((item, index) => ({
+      clauseId: 'event_1',
+      serverId: 'demo',
+      eventId: item.eventId,
+      eventName: 'demo.ready',
+      traceId: `trace-${index + 1}`,
+      occurredAt: '2026-10-04T00:00:00.000Z',
+      payloadHash: null,
+      data: item.data,
+    })),
+    trust: {
+      continuation: 'configured_trigger_instruction' as const,
+      evidence: 'untrusted_external_signal' as const,
+    },
+  };
+}
+
 function requiredTurnId(input: TurnInput): string {
   if (!input.id) throw new Error('wake Turn must have a deterministic id');
   return input.id;
 }
 
 describe('Event Intelligence wake -> Muffin Work', () => {
-  it('turns one EI wake into one deterministic, tainted system Turn on the original route', () => {
+  it('turns one EI wake into one deterministic, tainted system Turn on the original route', async () => {
     const queued: TurnInput[] = [];
     const existing = new Set<string>();
     const source = {
@@ -40,14 +111,10 @@ describe('Event Intelligence wake -> Muffin Work', () => {
         return id;
       },
     };
-    const activation = {
-      target: { runtime: 'muffin', kind: 'task', id: source.id },
-      continuation: { instruction: 'Inspect the release.' },
-      evidence: [{ eventId: 'e1', data: { status: 'green' } }],
-    };
+    const activation = activationFor(source.id);
 
-    const first = deliverEventWake(port, { wake_id: 'wake-1' }, activation);
-    const second = deliverEventWake(port, { wake_id: 'wake-1' }, activation);
+    const first = await deliverEventWake(port, { wake_id: 'wake-1' }, activation);
+    const second = await deliverEventWake(port, { wake_id: 'wake-1' }, activation);
 
     expect(first.runtimeReceiptId).toBe(workIdForEventWake('wake-1'));
     expect(second).toEqual({ runtimeReceiptId: first.runtimeReceiptId, duplicate: true });
@@ -64,7 +131,7 @@ describe('Event Intelligence wake -> Muffin Work', () => {
     expect(queued[0]?.text).toContain('matched external event evidence');
   });
 
-  it('fails closed when EI targets work Muffin no longer has', () => {
+  it('fails closed when EI targets work Muffin no longer has', async () => {
     const port: EventWakePort = {
       source: () => null,
       has: () => false,
@@ -73,15 +140,13 @@ describe('Event Intelligence wake -> Muffin Work', () => {
         throw new Error('must not enqueue');
       },
     };
-    expect(() =>
+    await expect(
       deliverEventWake(
         port,
-        { wakeId: 'missing' },
-        {
-          target: { runtime: 'muffin', kind: 'task', id: 'gone' },
-        },
+        { wakeId: 'wake-1' },
+        activationFor('gone'),
       ),
-    ).toThrow(/source Work not found/);
+    ).rejects.toThrow(/Continuation target unavailable/);
   });
 });
 
