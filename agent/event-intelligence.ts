@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import type { EventActivation } from 'mcp-event-intelligence';
 import {
   createActivationDispatcher,
   createEmbeddedEventIntelligence,
   createEventIntelligenceAgentTools,
+  type EventActivation,
   type PortableAgentTool,
 } from 'mcp-event-intelligence/embedded';
 import type {
@@ -141,7 +141,10 @@ export async function deliverEventWake(
   activationInput: unknown,
 ): Promise<HostWakeReceipt> {
   const dispatch = createActivationDispatcher(activationDelivery(port));
-  return await dispatch(packet, activationInput);
+  const receipt = await dispatch(packet, activationInput);
+  return typeof receipt === 'string'
+    ? { runtimeReceiptId: receipt }
+    : receipt;
 }
 
 function principalFingerprint(ctx: ToolContext): string {
