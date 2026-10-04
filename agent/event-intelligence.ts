@@ -138,7 +138,7 @@ function activationDelivery(port: EventWakePort) {
 export async function deliverEventWake(
   port: EventWakePort,
   packet: Record<string, unknown>,
-  activationInput: unknown,
+  activationInput: EventActivation,
 ): Promise<HostWakeReceipt> {
   const dispatch = createActivationDispatcher(activationDelivery(port));
   const receipt = await dispatch(packet, activationInput);
