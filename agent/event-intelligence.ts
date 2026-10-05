@@ -83,7 +83,11 @@ function renderWakeText(activation: EventActivation): string {
 
 function activationDelivery(port: EventWakePort) {
   return {
-    receiptNamespace: 'muffin:event-intelligence',
+    receiptId: ({ activation }: { activation: EventActivation }) =>
+      createHash('sha256')
+        .update(`muffin:event-intelligence:${activation.wake.wakeId}`)
+        .digest('hex')
+        .slice(0, 32),
     hasReceipt: (workId: string) => port.has(workId),
     resolveTarget: (target: EventActivation['target']) =>
       target.runtime === 'muffin' && target.kind === 'task' ? port.source(target.id) : null,
