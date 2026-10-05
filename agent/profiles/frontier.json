@@ -7,7 +7,8 @@
     "*claude-fable-5*",
     "*claude-opus-4-7*",
     "*claude-opus-4-8*",
-    "gpt-5*"
+    "gpt-5*",
+    "gpt-6-luna"
   ],
   "maxToolsExposed": 24,
   "maxToolCallsPerTurn": 30,
