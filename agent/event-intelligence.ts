@@ -80,7 +80,10 @@ type RuntimePort = {
   onClose(hook: () => Promise<void>): void;
 };
 
-type EventWakeSource = Pick<TurnRecord, 'id' | 'tenant' | 'surface' | 'sessionId' | 'replyTo' | 'principal'>;
+type EventWakeSource = Pick<
+  TurnRecord,
+  'id' | 'tenant' | 'surface' | 'sessionId' | 'replyTo' | 'principal'
+>;
 
 export type EventWakePort = {
   source(turnId: string): EventWakeSource | null;
@@ -371,7 +374,6 @@ const attachedEventIntelligence = new WeakMap<object, AttachedEventIntelligence>
 export function getAttachedEventIntelligence(runtime: object): AttachedEventIntelligence | null {
   return attachedEventIntelligence.get(runtime) ?? null;
 }
-
 
 function runtimeWakePort(runtime: RuntimePort): EventWakePort {
   return {
