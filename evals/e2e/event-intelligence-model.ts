@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,11 +44,11 @@ function fixturePath(): string {
   );
 }
 
-function fixtureEntry(): McpServerEntry {
+function fixtureEntry(headFile: string): McpServerEntry {
   return {
     command: process.execPath,
     args: [fixturePath()],
-    env: {},
+    env: { EI_E2E_HEAD_FILE: headFile },
     approvedAt: new Date().toISOString(),
     tools: {},
   };
@@ -58,36 +58,17 @@ function safeLine(label: string, value: unknown): void {
   process.stdout.write(`${label} ${JSON.stringify(value)}\n`);
 }
 
-async function fetchBranchHead(): Promise<string> {
-  const [owner, repo] = REPOSITORY.split('/');
-  if (!owner || !repo) throw new Error(`Invalid EI_E2E_REPOSITORY: ${REPOSITORY}`);
-  const branchPath = BRANCH.split('/').map(encodeURIComponent).join('/');
-  const response = await fetch(
-    `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${branchPath}.atom`,
-    {
-      headers: {
-        Accept: 'application/atom+xml',
-        'User-Agent': 'muffin-ei-model-e2e',
-      },
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`GitHub Atom feed failed: ${response.status} ${await response.text()}`);
-  }
-  const feed = await response.text();
-  const sha = feed.match(/\/commit\/([0-9a-f]{40})/i)?.[1];
-  if (!sha) {
-    throw new Error('GitHub Atom feed did not contain a commit SHA');
-  }
-  return sha;
-}
-
 async function main(): Promise<void> {
   const apiKey = requireSecret('OPENAI_API_KEY');
   process.env.MUFFIN_EVENT_INTELLIGENCE = '1';
 
   const home = mkdtempSync(join(tmpdir(), 'muffin-ei-model-home-'));
   const workspace = mkdtempSync(join(tmpdir(), 'muffin-ei-model-ws-'));
+  const headFile = join(workspace, 'fixture-head.txt');
+  const initialHead = '1'.repeat(40);
+  const pausedHead = '2'.repeat(40);
+  const resumedHead = '3'.repeat(40);
+  writeFileSync(headFile, initialHead);
 
   let runtime: ReturnType<typeof buildRuntime> | null = null;
   try {
@@ -109,14 +90,14 @@ async function main(): Promise<void> {
       },
     }, home);
 
-    const probe = await connectServer('github-events', fixtureEntry());
+    const probe = await connectServer('github-events', fixtureEntry(headFile));
     const pins = pinTools(probe.tools);
     await probe.close();
     saveMcpRegistry({
       schemaVersion: 1,
       servers: {
         'github-events': {
-          ...fixtureEntry(),
+          ...fixtureEntry(headFile),
           tools: pins,
         },
       },
@@ -294,7 +275,7 @@ async function main(): Promise<void> {
       );
     }
 
-    const branchHeadBeforePause = await fetchBranchHead();
+    const branchHeadBeforePause = initialHead;
 
     const delivery: { value: { turnId: string; text: string } | null } = { value: null };
     const laneEvents: Array<Record<string, unknown>> = [];
@@ -326,39 +307,20 @@ async function main(): Promise<void> {
       branchHeadBeforePause,
     });
 
+    writeFileSync(headFile, pausedHead);
     const pauseDeadline = Date.now() + PAUSE_VERIFY_MS;
-    let branchHeadDuringPause = branchHeadBeforePause;
-    while (Date.now() < pauseDeadline && branchHeadDuringPause === branchHeadBeforePause) {
-      lane.tick(new Date());
-      if (delivery.value !== null) {
-        throw new Error('paused watch produced a wake before pause verification completed');
-      }
-      branchHeadDuringPause = await fetchBranchHead();
-      if (branchHeadDuringPause === branchHeadBeforePause) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    }
-    if (branchHeadDuringPause === branchHeadBeforePause) {
-      throw new Error(
-        `fixture branch did not change while watch was paused within ${PAUSE_VERIFY_MS}ms`,
-      );
-    }
-
-    // Give the MCP Events poller enough time to observe the changed remote ref
-    // while the trigger remains paused. A broken pause implementation must wake here.
-    const pausedSettleDeadline = Date.now() + 4_000;
-    while (Date.now() < pausedSettleDeadline) {
+    while (Date.now() < pauseDeadline) {
       lane.tick(new Date());
       await new Promise((resolve) => setTimeout(resolve, 500));
       if (delivery.value !== null) {
-        throw new Error('paused watch produced a wake after the fixture branch changed');
+        throw new Error('paused watch produced a wake after the fixture head changed');
       }
     }
     safeLine('EI_MODEL_E2E_PAUSE_VERIFIED', {
       watchId: WATCH_ID,
       branchHeadBeforePause,
-      branchHeadDuringPause,
-      noWakeAfterObservedChangeMs: 4_000,
+      branchHeadDuringPause: pausedHead,
+      noWakeAfterObservedChangeMs: PAUSE_VERIFY_MS,
     });
 
     const resumed = await runOwnerTurn(
@@ -375,6 +337,8 @@ async function main(): Promise<void> {
       watchId: WATCH_ID,
       version: resumedPersisted.version,
     });
+
+    writeFileSync(headFile, resumedHead);
 
     const deadline = Date.now() + TIMEOUT_MS;
     while (Date.now() < deadline && delivery.value === null) {
