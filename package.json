@@ -51,7 +51,7 @@
     "defuddle": "^0.19.3",
     "js-yaml": "^5.4.1",
     "linkedom": "^0.18.13",
-    "mcp-event-intelligence": "git+https://github.com/sarooo17/event-intelligence.git#f115a42f268bfe1f1514d1581866b3be6d4fce3a",
+    "mcp-event-intelligence": "git+https://github.com/sarooo17/event-intelligence.git#790bef371503bb47ea76dda900f94ffe8c944e90",
     "openai": "^7.9.0",
     "sqlite-vec": "^0.1.9",
     "unpdf": "1.8.1",
