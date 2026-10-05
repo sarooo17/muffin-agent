@@ -22,6 +22,8 @@ const MODEL = process.env.EI_E2E_MODEL ?? 'gpt-5.6-sol';
 const REPOSITORY = process.env.EI_E2E_REPOSITORY ?? 'sarooo17/muffin-agent';
 const BRANCH = process.env.EI_E2E_BRANCH ?? 'ei-model-e2e-fixture';
 const TIMEOUT_MS = Number(process.env.EI_E2E_TIMEOUT_MS ?? 180_000);
+const PAUSE_VERIFY_MS = Number(process.env.EI_E2E_PAUSE_VERIFY_MS ?? 20_000);
+const WATCH_ID = 'luna-lifecycle-watch';
 
 function requireSecret(name: string): string {
   const value = process.env[name];
@@ -56,8 +58,6 @@ function safeLine(label: string, value: unknown): void {
 }
 
 async function main(): Promise<void> {
-  // Read the secret once, only to hand it to Muffin's existing init secret
-  // store. It is never printed and never passed in argv.
   const apiKey = requireSecret('OPENAI_API_KEY');
   process.env.MUFFIN_EVENT_INTELLIGENCE = '1';
 
@@ -74,10 +74,6 @@ async function main(): Promise<void> {
       lightModel: MODEL,
     });
 
-    // Current OpenAI Chat Completions rejects function tools while reasoning is
-    // active for this model, but explicitly supports the same request with
-    // reasoning_effort=none. Exercise Muffin's existing owner override rather
-    // than changing the provider architecture for an EI integration spike.
     const config = loadConfig(home);
     saveConfig({
       ...config,
@@ -88,8 +84,6 @@ async function main(): Promise<void> {
       },
     }, home);
 
-    // Pin the exact real MCP stdio server definition before Muffin attaches it,
-    // using the same allowlist/rug-pull path as a normal install.
     const probe = await connectServer('github-events', fixtureEntry());
     const pins = pinTools(probe.tools);
     await probe.close();
@@ -106,10 +100,6 @@ async function main(): Promise<void> {
     runtime = buildRuntime(home, workspace, { extraDenyRead: [homedir()] });
     runtime.consolidation.stop();
 
-    // The normal turn path intentionally hides upstream provider text from the
-    // user. This E2E is a private diagnostic, so surface the typed provider
-    // error message (never headers or credentials) before the loop converts it
-    // into its generic HTTP-status reply.
     const provider = runtime.deps.provider;
     const originalChat = provider.chat.bind(provider);
     provider.chat = async (call) => {
@@ -123,21 +113,10 @@ async function main(): Promise<void> {
       }
     };
 
-    // This is an operational E2E, not Muffin's onboarding eval. A brand-new
-    // home deliberately activates the "first encounter" prompt, which asks the
-    // model to introduce itself and can dominate a one-shot automation request.
-    // Pretend canonical memory already has context so we exercise the normal
-    // owner-turn behaviour without writing fake personal facts to the database.
     runtime.memory.store.hasActiveFacts = () => true;
 
     const attachReport = await attachMcp(runtime, home);
 
-    // The fixture's `about` tool exists only to exercise Muffin's normal MCP
-    // pinning/attachment path. It is not part of the event-watch scenario, and
-    // exposing it gives the model an irrelevant medium-risk MCP action that can
-    // trigger an approval detour before it arms EI. Keep the real shared MCP
-    // Events connection attached, but remove this test-only tool from the model
-    // surface.
     const fixtureAbout = runtime.deps.tools.findIndex(
       (tool) => tool.spec.name === 'mcp_github-events_about',
     );
@@ -147,8 +126,18 @@ async function main(): Promise<void> {
     if (attachReport.some((line) => line.includes('attach fallito'))) {
       throw new Error(`EI attach failed: ${attachReport.join(' | ')}`);
     }
-    if (exposure.some((line) => /event_watch_(sources|create)/.test(line))) {
-      throw new Error(`EI tools were truncated from model exposure: ${exposure.join(' | ')}`);
+    const lifecycleTools = [
+      'event_watch_sources',
+      'event_watch_create',
+      'event_watch_list',
+      'event_watch_inspect',
+      'event_watch_pause',
+      'event_watch_resume',
+      'event_watch_update',
+      'event_watch_delete',
+    ];
+    if (exposure.some((line) => lifecycleTools.some((name) => line.includes(name)))) {
+      throw new Error(`EI lifecycle tools were truncated from model exposure: ${exposure.join(' | ')}`);
     }
 
     safeLine('EI_MODEL_E2E_BOOT', {
@@ -161,45 +150,60 @@ async function main(): Promise<void> {
     });
 
     const session = runtime.deps.sessions.open('ei-model-e2e');
-    const prompt =
-      `Avvisami quando cambia l'HEAD del branch "${BRANCH}" del repo "${REPOSITORY}". ` +
-      'Configura davvero questa attesa usando gli strumenti disponibili, senza limitarti a promettere che lo farai. ' +
-      'Non serve controllarlo continuamente con il modello: aspetta il cambiamento e dimmelo quando succede.';
+    const runOwnerTurn = async (label: string, text: string) => {
+      const result = await runTurn(runtime!.deps, {
+        principal: OWNER,
+        tenant: TENANT,
+        surface: 'cli',
+        session,
+        text,
+        replyTo: { channel: 'cli', chatId: 'ei-model-e2e' },
+      });
+      const calls = runtime!.deps.turns.effects({ turnId: result.turnId }).calls.map((call) => ({
+        tool: call.tool,
+        capability: call.capability,
+        isError: call.isError,
+      }));
+      safeLine(label, {
+        turnId: result.turnId,
+        stopped: result.stopped,
+        toolCalls: calls,
+        response: result.text,
+      });
+      return { result, calls };
+    };
+    const requireTool = (
+      calls: Array<{ tool: string; isError?: boolean }>,
+      tool: string,
+      phase: string,
+    ) => {
+      const call = calls.find((entry) => entry.tool === tool);
+      if (!call) {
+        throw new Error(
+          `${phase}: model did not call ${tool}; calls=${calls.map((entry) => entry.tool).join(', ') || '(none)'}`,
+        );
+      }
+      if (call.isError) {
+        throw new Error(`${phase}: ${tool} returned an error`);
+      }
+    };
 
-    const first = await runTurn(runtime.deps, {
-      principal: OWNER,
-      tenant: TENANT,
-      surface: 'cli',
-      session,
-      text: prompt,
-      replyTo: { channel: 'cli', chatId: 'ei-model-e2e' },
-    });
+    const created = await runOwnerTurn(
+      'EI_MODEL_E2E_CREATE',
+      `Crea davvero un monitor persistente con id "${WATCH_ID}" che mi avvisi ogni volta che cambia l'HEAD del branch "${BRANCH}" del repo "${REPOSITORY}". ` +
+        'Usa prima event_watch_sources per verificare la sorgente e poi event_watch_create. ' +
+        'Il monitor deve restare attivo dopo un match, quindi non deve essere one-shot.',
+    );
+    requireTool(created.calls, 'event_watch_sources', 'create');
+    requireTool(created.calls, 'event_watch_create', 'create');
+    safeLine('EI_MODEL_E2E_ARMED', { watchId: WATCH_ID, turnId: created.result.turnId });
 
-    const firstCalls = runtime.deps.turns.effects({ turnId: first.turnId }).calls.map((call) => ({
-      tool: call.tool,
-      capability: call.capability,
-      isError: call.isError,
-    }));
-    safeLine('EI_MODEL_E2E_FIRST_TURN', {
-      turnId: first.turnId,
-      stopped: first.stopped,
-      toolCalls: firstCalls,
-      response: first.text,
-    });
-
-    const createdWatch = firstCalls.some((call) => call.tool === 'event_watch_create');
-    if (!createdWatch) {
-      throw new Error(
-        `model did not create an event watch; tool calls: ${firstCalls.map((c) => c.tool).join(', ') || '(none)'}`,
-      );
-    }
-
-    safeLine('EI_MODEL_E2E_ARMED', {
-      turnId: first.turnId,
-      stopped: first.stopped,
-      toolCalls: firstCalls,
-      response: first.text,
-    });
+    const inspected = await runOwnerTurn(
+      'EI_MODEL_E2E_LIST_INSPECT',
+      `Verifica il monitor "${WATCH_ID}" appena creato: usa event_watch_list per trovarlo e event_watch_inspect per mostrarmi stato e dettagli. Non modificarlo.`,
+    );
+    requireTool(inspected.calls, 'event_watch_list', 'list/inspect');
+    requireTool(inspected.calls, 'event_watch_inspect', 'list/inspect');
 
     const delivery: { value: { turnId: string; text: string } | null } = { value: null };
     const laneEvents: Array<Record<string, unknown>> = [];
@@ -216,6 +220,33 @@ async function main(): Promise<void> {
       onEvent: (event) => laneEvents.push(event as unknown as Record<string, unknown>),
     });
 
+    const paused = await runOwnerTurn(
+      'EI_MODEL_E2E_PAUSE',
+      `Metti in pausa il monitor "${WATCH_ID}" usando event_watch_pause. Non cancellarlo e non crearne un altro.`,
+    );
+    requireTool(paused.calls, 'event_watch_pause', 'pause');
+    safeLine('EI_MODEL_E2E_PAUSED', { watchId: WATCH_ID });
+
+    const pauseDeadline = Date.now() + PAUSE_VERIFY_MS;
+    while (Date.now() < pauseDeadline) {
+      lane.tick(new Date());
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (delivery.value !== null) {
+        throw new Error('paused watch produced a wake after the fixture branch changed');
+      }
+    }
+    safeLine('EI_MODEL_E2E_PAUSE_VERIFIED', {
+      watchId: WATCH_ID,
+      noWakeForMs: PAUSE_VERIFY_MS,
+    });
+
+    const resumed = await runOwnerTurn(
+      'EI_MODEL_E2E_RESUME',
+      `Riattiva il monitor "${WATCH_ID}" usando event_watch_resume. Mantieni la stessa condizione e resta in attesa del prossimo cambio del branch.`,
+    );
+    requireTool(resumed.calls, 'event_watch_resume', 'resume');
+    safeLine('EI_MODEL_E2E_RESUMED', { watchId: WATCH_ID });
+
     const deadline = Date.now() + TIMEOUT_MS;
     while (Date.now() < deadline && delivery.value === null) {
       lane.tick(new Date());
@@ -227,19 +258,49 @@ async function main(): Promise<void> {
       throw new Error(`timed out waiting for EI wake/model reply after ${TIMEOUT_MS}ms`);
     }
 
-    const finalRecord = runtime.deps.turns.get(delivered.turnId);
-    const finalCalls = runtime.deps.turns.effects({ turnId: delivered.turnId }).calls.map((call) => ({
+    const wakeRecord = runtime.deps.turns.get(delivered.turnId);
+    const wakeCalls = runtime.deps.turns.effects({ turnId: delivered.turnId }).calls.map((call) => ({
       tool: call.tool,
       capability: call.capability,
       isError: call.isError,
     }));
 
-    safeLine('EI_MODEL_E2E_COMPLETE', {
+    safeLine('EI_MODEL_E2E_WAKE', {
       wakeTurnId: delivered.turnId,
-      principal: finalRecord?.principal ?? null,
-      toolCalls: finalCalls,
+      principal: wakeRecord?.principal ?? null,
+      toolCalls: wakeCalls,
       response: delivered.text,
       laneEvents,
+    });
+
+    const updated = await runOwnerTurn(
+      'EI_MODEL_E2E_UPDATE',
+      `Aggiorna il monitor persistente "${WATCH_ID}" usando event_watch_update: continua a monitorare lo stesso branch "${BRANCH}" del repo "${REPOSITORY}", ma cambia l'istruzione di continuazione in "Segnala il nuovo HEAD e confrontalo con quello precedente". Non renderlo one-shot.`,
+    );
+    requireTool(updated.calls, 'event_watch_update', 'update');
+
+    const removed = await runOwnerTurn(
+      'EI_MODEL_E2E_DELETE',
+      `Elimina definitivamente il monitor "${WATCH_ID}" usando event_watch_delete.`,
+    );
+    requireTool(removed.calls, 'event_watch_delete', 'delete');
+
+    const finalList = await runOwnerTurn(
+      'EI_MODEL_E2E_FINAL_LIST',
+      `Usa event_watch_list per verificare lo stato finale del monitor "${WATCH_ID}" dopo la cancellazione. Non creare o modificare nulla.`,
+    );
+    requireTool(finalList.calls, 'event_watch_list', 'final list');
+
+    safeLine('EI_MODEL_E2E_COMPLETE', {
+      watchId: WATCH_ID,
+      createCalls: created.calls,
+      listInspectCalls: inspected.calls,
+      pauseCalls: paused.calls,
+      resumeCalls: resumed.calls,
+      wakeTurnId: delivered.turnId,
+      updateCalls: updated.calls,
+      deleteCalls: removed.calls,
+      finalListCalls: finalList.calls,
     });
   } finally {
     runtime?.close();
