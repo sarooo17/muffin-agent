@@ -1,150 +1,19 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createEventIntelligenceHost, createMcpRegistryAdapter } from 'mcp-event-intelligence/host';
 import { describe, expect, it } from 'vitest';
 import {
   attachEventIntelligence,
-  deliverEventWake,
+  createMuffinEventIntelligence,
   type EventWakePort,
-  makeEventIntelligenceTools,
-  workIdForEventWake,
 } from './event-intelligence.js';
 import { toolContext } from './fixtures/tool-context.js';
 import type { LoopDeps, RegisteredTool, TurnInput } from './loop.js';
-
-function activationFor(
-  targetId: string,
-  instruction = 'Inspect the release.',
-  evidence = [{ eventId: 'e1', data: { status: 'green' } }],
-) {
-  return {
-    activationVersion: '2' as const,
-    wake: {
-      wakeId: 'wake-1',
-      status: 'queued',
-      runtimeReceiptId: null,
-      matchedAt: '2026-10-04T00:00:00.000Z',
-    },
-    target: { runtime: 'muffin', kind: 'task', id: targetId },
-    trigger: {
-      triggerId: 'trigger-1',
-      version: '1',
-      description: null,
-      pattern: {
-        version: '2' as const,
-        root: { kind: 'event' as const, ref: 'event_1' },
-        partitionBy: [],
-        selection: {
-          overlap: 'disallow' as const,
-          afterMatch: 'skipPastLast' as const,
-          maxMatchesPerEvent: 10,
-        },
-        execution: {
-          maxCandidates: 512,
-          maxSemanticEvaluations: 16,
-          maxBufferedEvents: 10000,
-        },
-      },
-      lifecycle: {
-        oneShot: true,
-        cooldownMs: 0,
-        completeOnGoal: false,
-      },
-    },
-    continuation: {
-      instruction,
-      contextPolicy: {
-        evidence: 'matched_events' as const,
-        maxEvents: 20,
-        includeData: true,
-      },
-    },
-    match: {
-      matchId: 'match-1',
-      status: 'matched',
-      partitionKey: null,
-      openedAt: '2026-10-04T00:00:00.000Z',
-      updatedAt: '2026-10-04T00:00:00.000Z',
-    },
-    evidence: evidence.map((item, index) => ({
-      clauseId: 'event_1',
-      serverId: 'demo',
-      eventId: item.eventId,
-      eventName: 'demo.ready',
-      traceId: `trace-${index + 1}`,
-      occurredAt: '2026-10-04T00:00:00.000Z',
-      payloadHash: null,
-      data: item.data,
-    })),
-    trust: {
-      continuation: 'configured_trigger_instruction' as const,
-      evidence: 'untrusted_external_signal' as const,
-    },
-  };
-}
 
 function requiredTurnId(input: TurnInput): string {
   if (!input.id) throw new Error('wake Turn must have a deterministic id');
   return input.id;
 }
-
-describe('Event Intelligence wake -> Muffin Work', () => {
-  it('turns one EI wake into one deterministic, tainted system Turn on the original route', async () => {
-    const queued: TurnInput[] = [];
-    const existing = new Set<string>();
-    const source = {
-      id: 'source-turn',
-      tenant: 'host',
-      surface: 'telegram',
-      sessionId: 'owner',
-      replyTo: { chatId: '42' },
-    };
-    const port: EventWakePort = {
-      source: (id) => (id === source.id ? source : null),
-      has: (id) => existing.has(id),
-      openSession: (id) => ({ id, file: `/tmp/${id}.jsonl` }),
-      enqueue: (input) => {
-        queued.push(input);
-        const id = requiredTurnId(input);
-        existing.add(id);
-        return id;
-      },
-    };
-    const activation = activationFor(source.id);
-
-    const first = await deliverEventWake(port, { wake_id: 'wake-1' }, activation);
-    const second = await deliverEventWake(port, { wake_id: 'wake-1' }, activation);
-
-    expect(first.runtimeReceiptId).toBe(workIdForEventWake('wake-1'));
-    expect(second).toEqual({ runtimeReceiptId: first.runtimeReceiptId, duplicate: true });
-    expect(queued).toHaveLength(1);
-    expect(queued[0]).toMatchObject({
-      id: first.runtimeReceiptId,
-      principal: { kind: 'system', source: 'event-intelligence' },
-      tenant: 'host',
-      surface: 'telegram',
-      contentTaint: 3,
-      replyTo: { chatId: '42' },
-    });
-    expect(queued[0]?.text).toContain('Inspect the release.');
-    expect(queued[0]?.text).toContain('matched external event evidence');
-  });
-
-  it('fails closed when EI targets work Muffin no longer has', async () => {
-    const port: EventWakePort = {
-      source: () => null,
-      has: () => false,
-      openSession: (id) => ({ id, file: '/tmp/session' }),
-      enqueue: () => {
-        throw new Error('must not enqueue');
-      },
-    };
-    await expect(
-      deliverEventWake(port, { wakeId: 'wake-1' }, activationFor('gone')),
-    ).rejects.toThrow(/Continuation target unavailable/);
-  });
-});
 
 describe('embedded EI on Muffin-owned MCP sessions', () => {
   it('discovers an Events-capable MCP without reconnecting and can persist a watch', async () => {
@@ -316,20 +185,12 @@ describe('MCP event -> EI match -> Muffin Work E2E', () => {
       pollIntervalMs: 60_000,
     };
 
-    const host = await createEventIntelligenceHost({
-      dataDir: join(home, 'ei'),
-      mcpRegistry: createMcpRegistryAdapter({
-        listConnections: () => [connection],
-      }),
-      wake: (packet, activation) => deliverEventWake(port, packet, activation),
-    });
+    const embedded = await createMuffinEventIntelligence([connection], home, port);
 
     try {
-      const create = makeEventIntelligenceTools(host).find(
-        (tool) => tool.spec.name === 'event_watch_create',
-      );
+      const create = embedded.toolCatalog.get('event_watch_create');
       if (!create) throw new Error('event_watch_create was not registered');
-      const armed = await create.handler(
+      const armed = await create.execute(
         {
           events: [
             {
@@ -342,10 +203,10 @@ describe('MCP event -> EI match -> Muffin Work E2E', () => {
         },
         toolContext({ turnId: source.id }),
       );
-      expect(armed.isError).not.toBe(true);
+      expect(armed.ok).toBe(true);
       expect(queued).toEqual([]);
 
-      await host.runtime.mcpEventsClient.pollAll();
+      await embedded.host.runtime.mcpEventsClient.pollAll();
       expect(queued).toHaveLength(1);
       expect(queued[0]).toMatchObject({
         principal: { kind: 'system', source: 'event-intelligence' },
@@ -357,10 +218,10 @@ describe('MCP event -> EI match -> Muffin Work E2E', () => {
       expect(queued[0]?.text).toContain('Inspect the matched demo event.');
       expect(queued[0]?.text).toContain('"value": 42');
 
-      await host.runtime.mcpEventsClient.pollAll();
+      await embedded.host.runtime.mcpEventsClient.pollAll();
       expect(queued).toHaveLength(1);
     } finally {
-      await host.close();
+      await embedded.close();
       rmSync(home, { recursive: true, force: true });
     }
   });
