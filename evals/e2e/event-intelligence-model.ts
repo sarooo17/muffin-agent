@@ -75,7 +75,7 @@ async function fetchBranchHead(): Promise<string> {
     throw new Error(`GitHub Atom feed failed: ${response.status} ${await response.text()}`);
   }
   const feed = await response.text();
-  const sha = feed.match(/\\/commit\\/([0-9a-f]{40})/i)?.[1];
+  const sha = feed.match(/\/commit\/([0-9a-f]{40})/i)?.[1];
   if (!sha) {
     throw new Error('GitHub Atom feed did not contain a commit SHA');
   }
