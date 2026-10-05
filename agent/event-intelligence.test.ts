@@ -189,6 +189,7 @@ describe('MCP event -> EI match -> Muffin Work E2E', () => {
       surface: 'telegram',
       sessionId: 'owner',
       replyTo: { chatId: '42' },
+      principal: { kind: 'owner', connector: 'cli', externalId: 'local' } as const,
     };
     const port: EventWakePort = {
       source: (id) => (id === source.id ? source : null),
@@ -263,6 +264,7 @@ describe('MCP event -> EI match -> Muffin Work E2E', () => {
       if (!create) throw new Error('event_watch_create was not registered');
       const armed = await create.execute(
         {
+          trigger_id: 'wake-readable-watch',
           events: [
             {
               event: 'demo.ready',
@@ -288,6 +290,45 @@ describe('MCP event -> EI match -> Muffin Work E2E', () => {
       });
       expect(queued[0]?.text).toContain('Inspect the matched demo event.');
       expect(queued[0]?.text).toContain('"value": 42');
+
+      const wakeTurnId = requiredTurnId(queued[0]!);
+      const wakeContext = toolContext({
+        turnId: wakeTurnId,
+        principal: { kind: 'system', source: 'event-intelligence' },
+      });
+      const list = embedded.toolCatalog.get('event_watch_list');
+      const inspect = embedded.toolCatalog.get('event_watch_inspect');
+      const pause = embedded.toolCatalog.get('event_watch_pause');
+      if (!list || !inspect || !pause) throw new Error('EI lifecycle tools were not registered');
+
+      const wakeList = await list.execute(
+        { trigger_id: 'wake-readable-watch', limit: 10 },
+        wakeContext,
+      );
+      expect(wakeList.ok).toBe(true);
+      expect(wakeList.data?.triggers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ triggerId: 'wake-readable-watch' }),
+        ]),
+      );
+
+      const wakeInspect = await inspect.execute(
+        { trigger_id: 'wake-readable-watch', version: '1' },
+        wakeContext,
+      );
+      expect(wakeInspect.ok).toBe(true);
+      expect(wakeInspect.data?.trigger).toMatchObject({
+        triggerId: 'wake-readable-watch',
+        version: '1',
+      });
+
+      // The read scope inherited from the wake never becomes owner authority.
+      const deniedMutation = await pause.execute(
+        { trigger_id: 'wake-readable-watch', version: '1' },
+        wakeContext,
+      );
+      expect(deniedMutation.ok).toBe(false);
+      expect(deniedMutation.error?.code).toBe('EVENT_WATCH_OWNER_REQUIRED');
 
       await embedded.host.runtime.mcpEventsClient.pollAll();
       expect(queued).toHaveLength(1);
