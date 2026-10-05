@@ -83,6 +83,7 @@ describe('Muffin Event Intelligence host conformance', () => {
             surface: 'cli',
             sessionId: `conformance:${turnId}`,
             replyTo: { conformanceTriggerId: turnId },
+            principal: { kind: 'owner', connector: 'cli', externalId: 'local' } as const,
           }),
           has: (receiptId) => persistedReceipts.has(receiptId),
           openSession: (sessionId) => ({
