@@ -14,7 +14,7 @@ function requiredTurnId(input: TurnInput): string {
 }
 
 describe('Muffin Event Intelligence host conformance', () => {
-  it('passes the public EI v0.10 management host contract through Muffin tools', async () => {
+  it('passes the public EI v0.11 management host contract through Muffin tools', async () => {
     const adapter = {
       name: 'muffin-agent',
 
@@ -83,6 +83,7 @@ describe('Muffin Event Intelligence host conformance', () => {
             surface: 'cli',
             sessionId: `conformance:${turnId}`,
             replyTo: { conformanceTriggerId: turnId },
+            principal: { kind: 'owner', connector: 'cli', externalId: 'local' } as const,
           }),
           has: (receiptId) => persistedReceipts.has(receiptId),
           openSession: (sessionId) => ({

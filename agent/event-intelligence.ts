@@ -10,7 +10,7 @@ import type {
   EventIntelligenceObservabilitySink,
 } from 'mcp-event-intelligence/observability';
 import { fence } from '../core/memory/spotlight.js';
-import type { CapabilityDecl } from '../core/policy/types.js';
+import type { CapabilityDecl, Principal } from '../core/policy/types.js';
 import type { SessionRef } from '../core/session/store.js';
 import { ATTR, type Tracer } from '../core/tracing/types.js';
 import type { TurnRecord } from '../core/turns/store.js';
@@ -80,7 +80,7 @@ type RuntimePort = {
   onClose(hook: () => Promise<void>): void;
 };
 
-type EventWakeSource = Pick<TurnRecord, 'id' | 'tenant' | 'surface' | 'sessionId' | 'replyTo'>;
+type EventWakeSource = Pick<TurnRecord, 'id' | 'tenant' | 'surface' | 'sessionId' | 'replyTo' | 'principal'>;
 
 export type EventWakePort = {
   source(turnId: string): EventWakeSource | null;
@@ -103,7 +103,51 @@ function renderWakeText(activation: EventActivation): string {
   return `A durable Event Intelligence condition matched.\n\nContinuation: ${instruction}\n\n${wrapped.block}`;
 }
 
-function activationDelivery(port: EventWakePort) {
+type EventTriggerOwner = {
+  type: 'owner';
+  principal_id: string;
+  tenant_id: string;
+};
+
+const MAX_WAKE_OWNER_BINDINGS = 1024;
+
+function principalFingerprint(principal: Principal): string {
+  return createHash('sha256').update(JSON.stringify(principal)).digest('hex').slice(0, 24);
+}
+
+function triggerOwner(principal: Principal, tenant: string): EventTriggerOwner | null {
+  if (principal.kind !== 'owner') return null;
+  return {
+    type: 'owner',
+    principal_id: `muffin:${principalFingerprint(principal)}`,
+    tenant_id: tenant,
+  };
+}
+
+class WakeOwnerBindings {
+  private readonly owners = new Map<string, EventTriggerOwner>();
+
+  remember(turnId: string, owner: EventTriggerOwner | null): void {
+    if (!owner) return;
+    this.owners.delete(turnId);
+    this.owners.set(turnId, owner);
+    while (this.owners.size > MAX_WAKE_OWNER_BINDINGS) {
+      const oldest = this.owners.keys().next().value;
+      if (typeof oldest !== 'string') break;
+      this.owners.delete(oldest);
+    }
+  }
+
+  get(turnId: string): EventTriggerOwner | undefined {
+    return this.owners.get(turnId);
+  }
+
+  clear(): void {
+    this.owners.clear();
+  }
+}
+
+function activationDelivery(port: EventWakePort, wakeOwners: WakeOwnerBindings) {
   return {
     receiptNamespace: 'muffin:event-intelligence',
     hasReceipt: (workId: string) => port.has(workId),
@@ -117,8 +161,8 @@ function activationDelivery(port: EventWakePort) {
       activation: EventActivation;
       target: EventWakeSource;
       receiptId: string;
-    }) => ({
-      runtimeReceiptId: port.enqueue({
+    }) => {
+      const runtimeReceiptId = port.enqueue({
         id: receiptId,
         principal: { kind: 'system', source: 'event-intelligence' },
         tenant: target.tenant,
@@ -127,8 +171,14 @@ function activationDelivery(port: EventWakePort) {
         text: renderWakeText(activation),
         contentTaint: EXTERNAL,
         ...(target.replyTo === null ? {} : { replyTo: target.replyTo }),
-      }),
-    }),
+      });
+      // A wake is intentionally a system principal, never an owner principal.
+      // Keep only the originating owner's *read scope* beside the deterministic
+      // wake turn id so list/inspect can explain the trigger that caused this
+      // wake. Mutation control below still rejects every non-owner principal.
+      wakeOwners.remember(runtimeReceiptId, triggerOwner(target.principal, target.tenant));
+      return { runtimeReceiptId };
+    },
   };
 }
 
@@ -153,11 +203,7 @@ function muffinEventObservability(tracer: Tracer): EventIntelligenceObservabilit
   };
 }
 
-function principalFingerprint(ctx: ToolContext): string {
-  return createHash('sha256').update(JSON.stringify(ctx.principal)).digest('hex').slice(0, 24);
-}
-
-function portableTooling() {
+function portableTooling(wakeOwners: WakeOwnerBindings) {
   return {
     names: {
       sources: 'event_watch_sources',
@@ -169,23 +215,26 @@ function portableTooling() {
       delete: 'event_watch_delete',
       update: 'event_watch_update',
     },
-    resolveContext: (ctx: ToolContext) => ({
-      target: { runtime: 'muffin', kind: 'task', id: ctx.turnId },
-      ...(ctx.principal.kind === 'owner'
-        ? {
-            actor: {
-              type: 'agent',
-              principal_id: 'muffin:event-intelligence',
-              tenant_id: ctx.tenant,
-            },
-            owner: {
-              type: 'owner',
-              principal_id: `muffin:${principalFingerprint(ctx)}`,
-              tenant_id: ctx.tenant,
-            },
-          }
-        : {}),
-    }),
+    resolveContext: (ctx: ToolContext) => {
+      const owner =
+        triggerOwner(ctx.principal, ctx.tenant) ??
+        (ctx.principal.kind === 'system' && ctx.principal.source === 'event-intelligence'
+          ? wakeOwners.get(ctx.turnId)
+          : undefined);
+      return {
+        target: { runtime: 'muffin', kind: 'task', id: ctx.turnId },
+        ...(ctx.principal.kind === 'owner'
+          ? {
+              actor: {
+                type: 'agent',
+                principal_id: 'muffin:event-intelligence',
+                tenant_id: ctx.tenant,
+              },
+            }
+          : {}),
+        ...(owner ? { owner } : {}),
+      };
+    },
     control: ({ runtimeContext, action }: { runtimeContext: ToolContext; action: string }) =>
       runtimeContext.principal.kind === 'owner'
         ? {
@@ -293,14 +342,36 @@ export async function createMuffinEventIntelligence(
   wakePort: EventWakePort,
   observability?: EventIntelligenceObservabilitySink,
 ) {
-  return createEmbeddedRuntimeIntegration<ToolContext>({
+  const wakeOwners = new WakeOwnerBindings();
+  const embedded = await createEmbeddedRuntimeIntegration<ToolContext>({
     dataDir: join(home, 'event-intelligence'),
     eventSources: connections,
-    activation: activationDelivery(wakePort),
+    activation: activationDelivery(wakePort, wakeOwners),
     ...(observability ? { observability } : {}),
-    tooling: portableTooling(),
+    tooling: portableTooling(wakeOwners),
+  });
+  return Object.freeze({
+    ...embedded,
+    async close() {
+      wakeOwners.clear();
+      await embedded.close();
+    },
   });
 }
+
+type AttachedEventIntelligence = Awaited<ReturnType<typeof createMuffinEventIntelligence>>;
+const attachedEventIntelligence = new WeakMap<object, AttachedEventIntelligence>();
+
+/**
+ * Internal test/diagnostic hook: returns the EI instance already attached to
+ * this runtime. Normal Muffin code does not need this; it exists so end-to-end
+ * tests can drive the same MCP Events client deterministically instead of
+ * relying on wall-clock polling.
+ */
+export function getAttachedEventIntelligence(runtime: object): AttachedEventIntelligence | null {
+  return attachedEventIntelligence.get(runtime) ?? null;
+}
+
 
 function runtimeWakePort(runtime: RuntimePort): EventWakePort {
   return {
@@ -327,6 +398,10 @@ export async function attachEventIntelligence(
     adapt: adaptPortableTool,
     register: (tool, portable) => runtime.register(tool, muffinCapabilityFor(portable)),
     onClose: (close) => runtime.onClose(close),
+  });
+  attachedEventIntelligence.set(runtime, embedded);
+  runtime.onClose(async () => {
+    attachedEventIntelligence.delete(runtime);
   });
 
   const diagnostics = await embedded.diagnostics();

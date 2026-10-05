@@ -3,6 +3,7 @@
 // It observes public GitHub branch state through the live GitHub REST API.
 // The test driver mutates the branch from outside this process; this server is
 // read-only and only reports a change through MCP Events.
+import { readFile } from 'node:fs/promises';
 import { McpServer, ProtocolError } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import {
@@ -51,24 +52,33 @@ const provider = createMcpEventsProvider({
           typeof args.baselineSha === 'string' && args.baselineSha.length > 0
             ? args.baselineSha
             : null;
-        const response = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`,
-          {
-            headers: {
-              Accept: 'application/vnd.github+json',
-              'User-Agent': 'muffin-ei-transport-fixture',
-              'X-GitHub-Api-Version': '2022-11-28',
+        const headFile = process.env.EI_E2E_HEAD_FILE;
+        let current;
+        if (headFile) {
+          current = (await readFile(headFile, 'utf8')).trim();
+        } else {
+          // The live transport test intentionally stays credential-free.
+          // Lifecycle E2E supplies EI_E2E_HEAD_FILE instead, so its correctness
+          // never depends on shared GitHub egress quotas or feed caching.
+          const branchPath = branch.split('/').map(encodeURIComponent).join('/');
+          const response = await fetch(
+            `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${branchPath}.atom`,
+            {
+              headers: {
+                Accept: 'application/atom+xml',
+                'User-Agent': 'muffin-ei-transport-fixture',
+              },
             },
-          },
-        );
-        if (!response.ok) {
-          const body = await response.text();
-          throw new Error(`GitHub GET ref failed: ${response.status} ${body}`);
+          );
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`GitHub Atom feed failed: ${response.status} ${body}`);
+          }
+          const feed = await response.text();
+          current = feed.match(/\/commit\/([0-9a-f]{40})/i)?.[1];
         }
-        const ref = await response.json();
-        const current = ref?.object?.sha;
-        if (typeof current !== 'string' || current.length === 0) {
-          throw new Error('GitHub ref response did not contain object.sha');
+        if (!current) {
+          throw new Error('GitHub event fixture did not contain a head SHA');
         }
 
         // A natural-language watch does not know a SHA. Its first poll is a
