@@ -20,10 +20,8 @@ import type { McpEventConnection } from './tools/mcp.js';
 
 /**
  * Muffin owns Work, authority, delivery and MCP credentials. EI stays embedded
- * and owns durable future conditions/correlation. This adapter only translates
- * the runtime-neutral EI contracts into Muffin concepts.
+ * and owns durable future conditions/correlation plus generic host plumbing.
  */
-
 const EXTERNAL: 3 = 3;
 const CLEAN: 0 = 0;
 
@@ -67,13 +65,6 @@ export type EventWakePort = {
   enqueue(input: TurnInput): string;
 };
 
-function workIdForEventWake(wakeId: string): string {
-  return createHash('sha256')
-    .update(`muffin:event-intelligence:${wakeId}`)
-    .digest('hex')
-    .slice(0, 32);
-}
-
 function renderWakeText(activation: EventActivation): string {
   const instruction =
     activation.continuation?.instruction ??
@@ -90,8 +81,7 @@ function renderWakeText(activation: EventActivation): string {
 
 function activationDelivery(port: EventWakePort) {
   return {
-    receiptId: ({ activation }: { activation: EventActivation }) =>
-      workIdForEventWake(activation.wake.wakeId),
+    receiptNamespace: 'muffin:event-intelligence',
     hasReceipt: (workId: string) => port.has(workId),
     resolveTarget: (target: EventActivation['target']) =>
       target.runtime === 'muffin' && target.kind === 'task' ? port.source(target.id) : null,
@@ -220,9 +210,7 @@ export async function createMuffinEventIntelligence(
 ) {
   return createEmbeddedRuntimeIntegration<ToolContext>({
     dataDir: join(home, 'event-intelligence'),
-    eventSources: {
-      list: () => connections,
-    },
+    eventSources: connections,
     activation: activationDelivery(wakePort),
     tooling: portableTooling(),
   });
@@ -248,27 +236,20 @@ export async function attachEventIntelligence(
     runtimeWakePort(runtime),
   );
 
-  for (const portable of embedded.tools) {
-    const tool = adaptPortableTool(portable);
-    runtime.register(
-      tool,
-      tool.capability === eventSourcesCapability.id
-        ? eventSourcesCapability
-        : eventTriggerCapability,
-    );
-  }
-  runtime.onClose(() => embedded.close());
+  embedded.bind({
+    adapt: adaptPortableTool,
+    register: (tool, portable) =>
+      runtime.register(
+        tool,
+        portable.capability.id === 'event-intelligence.event-sources.list'
+          ? eventSourcesCapability
+          : eventTriggerCapability,
+      ),
+    onClose: (close) => runtime.onClose(close),
+  });
 
-  const statuses = await embedded.status();
-  const ready = Array.isArray(statuses)
-    ? statuses.filter((row) => {
-        if (!row || typeof row !== 'object') return false;
-        const status = row as Record<string, unknown>;
-        return status.error == null && Array.isArray(status.events) && status.events.length > 0;
-      }).length
-    : 0;
-
+  const diagnostics = await embedded.diagnostics();
   return [
-    `event-intelligence — attivo, ${connections.length} connessioni MCP condivise, ${ready} Events-capable`,
+    `event-intelligence — attivo, ${diagnostics.connections} connessioni MCP condivise, ${diagnostics.eventsCapable} Events-capable`,
   ];
 }
