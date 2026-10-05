@@ -32,10 +32,15 @@ describe('shipped profiles', () => {
     expect(frontier?.thinking).toBe('adaptive');
   });
 
+  it('frontier: exposes enough tools for one complete durable lifecycle', () => {
+    const frontier = profiles.find((p) => p.name === 'frontier');
+    expect(frontier?.maxToolsExposed).toBe(32);
+  });
+
   it('GPT-6 Luna selects the frontier envelope instead of the conservative fallback', () => {
     const luna = selectProfile('gpt-6-luna', profiles);
     expect(luna.name).toBe('frontier');
-    expect(luna.maxToolsExposed).toBe(24);
+    expect(luna.maxToolsExposed).toBe(32);
     expect(luna.sampling).toBe('model-default');
   });
 
