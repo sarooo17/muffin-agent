@@ -5,10 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { connectServer } from '../core/mcp/connect.js';
 import { type McpServerEntry, pinTools } from '../core/mcp/registry.js';
-import {
-  createMuffinEventIntelligence,
-  type EventWakePort,
-} from './event-intelligence.js';
+import { createMuffinEventIntelligence, type EventWakePort } from './event-intelligence.js';
 import { toolContext } from './fixtures/tool-context.js';
 import type { TurnInput } from './loop.js';
 import { buildMcpTools } from './tools/mcp.js';
@@ -90,11 +87,7 @@ liveDescribe('real MCP stdio -> GitHub -> EI -> Muffin Work', () => {
 
     expect(attachment.eventConnections).toHaveLength(1);
 
-    const embedded = await createMuffinEventIntelligence(
-      attachment.eventConnections,
-      home,
-      port,
-    );
+    const embedded = await createMuffinEventIntelligence(attachment.eventConnections, home, port);
 
     try {
       const statuses = await embedded.status();

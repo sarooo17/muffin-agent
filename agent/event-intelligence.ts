@@ -55,10 +55,7 @@ type RuntimePort = {
   onClose(hook: () => Promise<void>): void;
 };
 
-type EventWakeSource = Pick<
-  TurnRecord,
-  'id' | 'tenant' | 'surface' | 'sessionId' | 'replyTo'
->;
+type EventWakeSource = Pick<TurnRecord, 'id' | 'tenant' | 'surface' | 'sessionId' | 'replyTo'>;
 
 export type EventWakePort = {
   source(turnId: string): EventWakeSource | null;
@@ -242,11 +239,7 @@ export async function attachEventIntelligence(
   connections: readonly McpEventConnection[],
   home: string,
 ): Promise<string[]> {
-  const embedded = await createMuffinEventIntelligence(
-    connections,
-    home,
-    runtimeWakePort(runtime),
-  );
+  const embedded = await createMuffinEventIntelligence(connections, home, runtimeWakePort(runtime));
 
   for (const portable of embedded.tools) {
     const tool = adaptPortableTool(portable);
