@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runHostConformance } from 'mcp-event-intelligence/conformance';
+import type { EventIntelligenceObservabilityEvent } from 'mcp-event-intelligence/observability';
 import { describe, expect, it } from 'vitest';
 import { createMuffinEventIntelligence, type EventWakePort } from './event-intelligence.js';
 import { toolContext } from './fixtures/tool-context.js';
@@ -13,11 +14,16 @@ function requiredTurnId(input: TurnInput): string {
 }
 
 describe('Muffin Event Intelligence host conformance', () => {
-  it('passes the public EI v0.9 host contract', async () => {
+  it('passes the public EI v0.10 management host contract through Muffin tools', async () => {
     const adapter = {
       name: 'muffin-agent',
 
-      async createHarness({ observability }: { observability: (event: unknown) => void }) {
+      async createHarness({
+        observability,
+      }: {
+        observability: (event: EventIntelligenceObservabilityEvent) => void;
+        profile: 'core' | 'management';
+      }) {
         const home = mkdtempSync(join(tmpdir(), 'muffin-ei-conformance-'));
         const deliveries: Array<{
           triggerId: string;
@@ -110,6 +116,45 @@ describe('Muffin Event Intelligence host conformance', () => {
 
         await start();
 
+        const executePortable = async (
+          name: string,
+          args: Record<string, unknown>,
+          turnId: string,
+        ) => {
+          const current = embedded;
+          if (!current) throw new Error('Event Intelligence conformance host is closed');
+          const tool = current.toolCatalog.get(name);
+          if (!tool) throw new Error(`${name} unavailable`);
+          const result = await tool.execute(
+            args,
+            toolContext({
+              turnId,
+              sessionId: `conformance:${turnId}`,
+            }),
+          );
+          if (!result.ok) {
+            throw new Error(result.error?.message ?? `${name} failed`);
+          }
+          return result.data ?? {};
+        };
+
+        const currentTriggerVersion = async (triggerId: string) => {
+          const listed = await executePortable(
+            'event_watch_list',
+            { trigger_id: triggerId, limit: 200 },
+            `list:${triggerId}`,
+          );
+          const entries = Array.isArray(listed.triggers) ? listed.triggers : [];
+          const current =
+            entries.find((entry: { status?: string }) =>
+              entry.status === 'active' || entry.status === 'paused',
+            ) ?? entries.at(-1);
+          if (!current?.version) {
+            throw new Error(`No owned Event Intelligence trigger ${triggerId}`);
+          }
+          return String(current.version);
+        };
+
         return {
           async createTrigger({
             triggerId,
@@ -122,10 +167,8 @@ describe('Muffin Event Intelligence host conformance', () => {
             oneShot: boolean;
             maxFirings?: number;
           }) {
-            const create = embedded?.toolCatalog.get('event_watch_create');
-            if (!create) throw new Error('event_watch_create unavailable');
-
-            const result = await create.execute(
+            await executePortable(
+              'event_watch_create',
               {
                 trigger_id: triggerId,
                 events: [
@@ -139,14 +182,8 @@ describe('Muffin Event Intelligence host conformance', () => {
                 one_shot: oneShot,
                 ...(maxFirings === undefined ? {} : { max_firings: maxFirings }),
               },
-              toolContext({
-                turnId: triggerId,
-                sessionId: `conformance:${triggerId}`,
-              }),
+              triggerId,
             );
-            if (!result.ok) {
-              throw new Error(result.error?.message ?? 'conformance trigger creation failed');
-            }
           },
 
           async emitEvent({
@@ -183,13 +220,72 @@ describe('Muffin Event Intelligence host conformance', () => {
             await start();
           },
 
+          async listTriggers() {
+            const listed = await executePortable('event_watch_list', {}, 'list-all');
+            return Array.isArray(listed.triggers) ? listed.triggers : [];
+          },
+
           async inspectTrigger(triggerId: string) {
-            const rows = await embedded?.host.triggerControl.listTriggers();
-            const entry = rows?.find(
-              (candidate: { definition: { triggerId: string } }) =>
-                candidate.definition.triggerId === triggerId,
+            const version = await currentTriggerVersion(triggerId);
+            const inspected = await executePortable(
+              'event_watch_inspect',
+              { trigger_id: triggerId, version },
+              `inspect:${triggerId}`,
             );
-            return entry?.state ?? null;
+            return {
+              ...(inspected.lifecycle ?? {}),
+              version: inspected.trigger?.version ?? version,
+            };
+          },
+
+          async pauseTrigger(triggerId: string) {
+            await executePortable(
+              'event_watch_pause',
+              { trigger_id: triggerId },
+              `pause:${triggerId}`,
+            );
+          },
+
+          async resumeTrigger(triggerId: string) {
+            await executePortable(
+              'event_watch_resume',
+              { trigger_id: triggerId },
+              `resume:${triggerId}`,
+            );
+          },
+
+          async updateTrigger({
+            triggerId,
+            threshold,
+          }: {
+            triggerId: string;
+            threshold: number;
+          }) {
+            await executePortable(
+              'event_watch_update',
+              {
+                trigger_id: triggerId,
+                events: [
+                  {
+                    event: 'conformance.value.changed',
+                    serverId: 'conformance',
+                    where: [{ path: 'value', op: 'gt', value: threshold }],
+                  },
+                ],
+                instruction: 'Continue the isolated EI host conformance scenario.',
+                one_shot: false,
+                max_firings: 5,
+              },
+              `update:${triggerId}`,
+            );
+          },
+
+          async deleteTrigger(triggerId: string) {
+            await executePortable(
+              'event_watch_delete',
+              { trigger_id: triggerId },
+              `delete:${triggerId}`,
+            );
           },
 
           async close() {
@@ -201,9 +297,10 @@ describe('Muffin Event Intelligence host conformance', () => {
       },
     };
 
-    const report = await runHostConformance(adapter);
+    const report = await runHostConformance(adapter, { profile: 'management' });
     expect(report.passed, JSON.stringify(report, null, 2)).toBe(true);
     expect(report.adapter).toBe('muffin-agent');
+    expect(report.profile).toBe('management');
     expect(report.summary.failed).toBe(0);
     expect(report.observability.eventNames).toContain('ei.trigger.created');
     expect(report.observability.eventNames).toContain('ei.match.matched');
