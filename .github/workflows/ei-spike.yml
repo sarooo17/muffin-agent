@@ -20,7 +20,11 @@ jobs:
           cache: npm
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
-      - run: npx vitest run agent/event-intelligence.test.ts core/mcp/mcp.test.ts
+      - run: >-
+          npx vitest run
+          agent/event-intelligence.test.ts
+          agent/event-intelligence.conformance.test.ts
+          core/mcp/mcp.test.ts
       - name: dependency licenses
         run: node scripts/check-dep-licenses.mjs
       - name: spike lint
@@ -28,6 +32,7 @@ jobs:
           npx biome check
           agent/event-intelligence.ts
           agent/event-intelligence.test.ts
+          agent/event-intelligence.conformance.test.ts
           agent/event-intelligence.mcp-transport-live.test.ts
           core/mcp/fixtures/github-events-server.mjs
           package.json
