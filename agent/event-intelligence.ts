@@ -41,6 +41,17 @@ export const eventSourcesCapability: CapabilityDecl = {
   hostOnly: true,
 };
 
+export const eventTriggerReadCapability: CapabilityDecl = {
+  id: 'events.trigger.read',
+  effect: 'context',
+  risk: 'low',
+  reversible: 'yes',
+  rerunnable: true,
+  resourceKind: 'none',
+  policyArgs: ['trigger_id'],
+  hostOnly: true,
+};
+
 export const eventTriggerCapability: CapabilityDecl = {
   id: 'events.trigger.create',
   effect: 'context',
@@ -49,6 +60,17 @@ export const eventTriggerCapability: CapabilityDecl = {
   rerunnable: false,
   resourceKind: 'none',
   policyArgs: ['instruction'],
+  hostOnly: true,
+};
+
+export const eventTriggerManageCapability: CapabilityDecl = {
+  id: 'events.trigger.manage',
+  effect: 'context',
+  risk: 'low',
+  reversible: 'no',
+  rerunnable: false,
+  resourceKind: 'none',
+  policyArgs: ['trigger_id'],
   hostOnly: true,
 };
 
@@ -140,6 +162,12 @@ function portableTooling() {
     names: {
       sources: 'event_watch_sources',
       create: 'event_watch_create',
+      list: 'event_watch_list',
+      inspect: 'event_watch_inspect',
+      pause: 'event_watch_pause',
+      resume: 'event_watch_resume',
+      delete: 'event_watch_delete',
+      update: 'event_watch_update',
     },
     resolveContext: (ctx: ToolContext) => ({
       target: { runtime: 'muffin', kind: 'task', id: ctx.turnId },
@@ -158,12 +186,18 @@ function portableTooling() {
           }
         : {}),
     }),
-    control: ({ runtimeContext }: { runtimeContext: ToolContext }) =>
+    control: ({
+      runtimeContext,
+      action,
+    }: {
+      runtimeContext: ToolContext;
+      action: string;
+    }) =>
       runtimeContext.principal.kind === 'owner'
         ? {
             action: 'execute' as const,
             execution: {
-              receiptId: `muffin-policy:${runtimeContext.turnId}`,
+              receiptId: `muffin-policy:${runtimeContext.turnId}:${action}`,
             },
           }
         : {
@@ -179,30 +213,52 @@ function portableTooling() {
   };
 }
 
+function muffinCapabilityFor(tool: PortableAgentTool<ToolContext>): CapabilityDecl {
+  if (tool.capability.id === 'event-intelligence.event-sources.list') {
+    return eventSourcesCapability;
+  }
+  if (
+    tool.capability.id === 'event-intelligence.trigger.list' ||
+    tool.capability.id === 'event-intelligence.trigger.inspect'
+  ) {
+    return eventTriggerReadCapability;
+  }
+  if (tool.capability.id === 'event-intelligence.trigger.create') {
+    return eventTriggerCapability;
+  }
+  return eventTriggerManageCapability;
+}
+
 function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool {
+  const muffinCapability = muffinCapabilityFor(tool);
   const sources = tool.capability.id === 'event-intelligence.event-sources.list';
+  const triggerRead =
+    tool.capability.id === 'event-intelligence.trigger.list' ||
+    tool.capability.id === 'event-intelligence.trigger.inspect';
+
   return {
-    capability: sources ? eventSourcesCapability.id : eventTriggerCapability.id,
+    capability: muffinCapability.id,
     spec: {
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
     },
     throwTier: EXTERNAL,
-    ...(sources ? { keepResult: true } : {}),
+    ...(sources || triggerRead ? { keepResult: true } : {}),
     handler: async (args, ctx) => {
       const result = await tool.execute(args, ctx);
       if (!result.ok) {
         const detail = result.error?.message ?? 'Event Intelligence tool failed';
-        if (!sources && result.error?.code === 'EVENT_WATCH_OWNER_REQUIRED') {
+        if (result.error?.code === 'EVENT_WATCH_OWNER_REQUIRED') {
+          return { content: detail, isError: true, tier: CLEAN };
+        }
+        if (!sources) {
           return { content: detail, isError: true, tier: CLEAN };
         }
         const wrapped = fence(
-          sources ? 'event_sources' : 'event_watch',
+          'event_sources',
           detail,
-          sources
-            ? 'Event Intelligence source discovery error'
-            : 'Event Intelligence trigger error',
+          'Event Intelligence source discovery error',
         );
         return { content: wrapped.block, isError: true, tier: EXTERNAL };
       }
@@ -216,10 +272,25 @@ function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool
         return { content: wrapped.block, tier: EXTERNAL };
       }
 
+      if (triggerRead) {
+        return {
+          content: JSON.stringify(result.data ?? {}, null, 2),
+          tier: CLEAN,
+        };
+      }
+
+      const action = String(result.data?.action ?? tool.capability.operation ?? 'updated');
+      const triggerId = String(result.data?.triggerId ?? 'unknown');
+      const version = result.data?.version ? `@${String(result.data.version)}` : '';
+      const previousVersion = result.data?.previousVersion
+        ? ` (from @${String(result.data.previousVersion)})`
+        : '';
       return {
         content:
-          `event watch armed: ${String(result.data?.triggerId ?? 'created')}` +
-          ` (connections: ${(result.data?.connectionIds ?? []).join(', ')})`,
+          `event watch ${action}: ${triggerId}${version}${previousVersion}` +
+          (Array.isArray(result.data?.connectionIds)
+            ? ` (connections: ${result.data.connectionIds.join(', ')})`
+            : ''),
         tier: CLEAN,
       };
     },
@@ -265,12 +336,7 @@ export async function attachEventIntelligence(
   embedded.bind({
     adapt: adaptPortableTool,
     register: (tool, portable) =>
-      runtime.register(
-        tool,
-        portable.capability.id === 'event-intelligence.event-sources.list'
-          ? eventSourcesCapability
-          : eventTriggerCapability,
-      ),
+      runtime.register(tool, muffinCapabilityFor(portable)),
     onClose: (close) => runtime.onClose(close),
   });
 
