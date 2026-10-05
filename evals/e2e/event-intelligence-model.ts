@@ -61,23 +61,23 @@ function safeLine(label: string, value: unknown): void {
 async function fetchBranchHead(): Promise<string> {
   const [owner, repo] = REPOSITORY.split('/');
   if (!owner || !repo) throw new Error(`Invalid EI_E2E_REPOSITORY: ${REPOSITORY}`);
+  const branchPath = BRANCH.split('/').map(encodeURIComponent).join('/');
   const response = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(BRANCH)}`,
+    `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${branchPath}.atom`,
     {
       headers: {
-        Accept: 'application/vnd.github+json',
+        Accept: 'application/atom+xml',
         'User-Agent': 'muffin-ei-model-e2e',
-        'X-GitHub-Api-Version': '2022-11-28',
       },
     },
   );
   if (!response.ok) {
-    throw new Error(`GitHub GET ref failed: ${response.status} ${await response.text()}`);
+    throw new Error(`GitHub Atom feed failed: ${response.status} ${await response.text()}`);
   }
-  const payload = await response.json() as { object?: { sha?: unknown } };
-  const sha = payload.object?.sha;
-  if (typeof sha !== 'string' || sha.length === 0) {
-    throw new Error('GitHub ref response did not contain object.sha');
+  const feed = await response.text();
+  const sha = feed.match(/\\/commit\\/([0-9a-f]{40})/i)?.[1];
+  if (!sha) {
+    throw new Error('GitHub Atom feed did not contain a commit SHA');
   }
   return sha;
 }
