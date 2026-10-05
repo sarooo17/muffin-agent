@@ -2,14 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createEventIntelligenceHost, createMcpRegistryAdapter } from 'mcp-event-intelligence/host';
 import { describe, expect, it } from 'vitest';
 import { connectServer } from '../core/mcp/connect.js';
 import { type McpServerEntry, pinTools } from '../core/mcp/registry.js';
 import {
-  deliverEventWake,
+  createMuffinEventIntelligence,
   type EventWakePort,
-  makeEventIntelligenceTools,
 } from './event-intelligence.js';
 import { toolContext } from './fixtures/tool-context.js';
 import type { TurnInput } from './loop.js';
@@ -92,25 +90,21 @@ liveDescribe('real MCP stdio -> GitHub -> EI -> Muffin Work', () => {
 
     expect(attachment.eventConnections).toHaveLength(1);
 
-    const host = await createEventIntelligenceHost({
-      dataDir: join(home, 'ei'),
-      mcpRegistry: createMcpRegistryAdapter({
-        listConnections: () => attachment.eventConnections,
-      }),
-      wake: (packet, activation) => deliverEventWake(port, packet, activation),
-    });
+    const embedded = await createMuffinEventIntelligence(
+      attachment.eventConnections,
+      home,
+      port,
+    );
 
     try {
-      const statuses = await host.mcpStatus();
+      const statuses = await embedded.status();
       expect(statuses).toHaveLength(1);
       expect(JSON.stringify(statuses)).toContain('github.branch.head_changed');
 
-      const create = makeEventIntelligenceTools(host).find(
-        (tool) => tool.spec.name === 'event_watch_create',
-      );
+      const create = embedded.toolCatalog.get('event_watch_create');
       if (!create) throw new Error('event_watch_create was not registered');
 
-      const armed = await create.handler(
+      const armed = await create.execute(
         {
           events: [
             {
@@ -124,16 +118,16 @@ liveDescribe('real MCP stdio -> GitHub -> EI -> Muffin Work', () => {
         },
         toolContext({ turnId: source.id }),
       );
-      expect(armed.isError).not.toBe(true);
+      expect(armed.ok).toBe(true);
 
       // Baseline through the real Muffin MCP client -> stdio child -> GitHub.
-      await host.runtime.mcpEventsClient.pollAll();
+      await embedded.host.runtime.mcpEventsClient.pollAll();
       expect(queued).toHaveLength(0);
 
       // A separate test driver moves the remote branch while this process waits.
       for (let attempt = 0; attempt < 30 && queued.length === 0; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2_000));
-        await host.runtime.mcpEventsClient.pollAll();
+        await embedded.host.runtime.mcpEventsClient.pollAll();
       }
 
       expect(queued).toHaveLength(1);
@@ -148,10 +142,10 @@ liveDescribe('real MCP stdio -> GitHub -> EI -> Muffin Work', () => {
       expect(queued[0]?.text).toContain(expectedHead);
       expect(queued[0]?.text).toContain(baselineSha);
 
-      await host.runtime.mcpEventsClient.pollAll();
+      await embedded.host.runtime.mcpEventsClient.pollAll();
       expect(queued).toHaveLength(1);
     } finally {
-      await host.close().catch(() => {});
+      await embedded.close().catch(() => {});
       await attachment.close();
       rmSync(home, { recursive: true, force: true });
     }
