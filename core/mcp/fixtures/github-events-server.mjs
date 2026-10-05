@@ -69,7 +69,7 @@ const provider = createMcpEventsProvider({
           throw new Error(`GitHub Atom feed failed: ${response.status} ${body}`);
         }
         const feed = await response.text();
-        const current = feed.match(/\\/commit\\/([0-9a-f]{40})/i)?.[1];
+        const current = feed.match(/\/commit\/([0-9a-f]{40})/i)?.[1];
         if (!current) {
           throw new Error('GitHub Atom feed did not contain a commit SHA');
         }
