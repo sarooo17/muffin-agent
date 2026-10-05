@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { runInit } from '../../cli/init.js';
 import { loadConfig, saveConfig } from '../../core/config/config.js';
 import { toolContext } from '../../agent/fixtures/tool-context.js';
+import { getAttachedEventIntelligence } from '../../agent/event-intelligence.js';
 import { runTurn } from '../../agent/loop.js';
 import { attachMcp, buildRuntime } from '../../agent/runtime.js';
 import { makeLaneRunner } from '../../agent/turn-lane.js';
@@ -122,6 +123,10 @@ async function main(): Promise<void> {
     runtime.memory.store.hasActiveFacts = () => true;
 
     const attachReport = await attachMcp(runtime, home);
+    const attachedEi = getAttachedEventIntelligence(runtime);
+    if (!attachedEi) {
+      throw new Error('EI attached successfully but the runtime instance is unavailable');
+    }
 
     const fixtureAbout = runtime.deps.tools.findIndex(
       (tool) => tool.spec.name === 'mcp_github-events_about',
@@ -327,6 +332,8 @@ async function main(): Promise<void> {
     });
 
     writeFileSync(headFile, pausedHead);
+    const pausedPoll = await attachedEi.host.runtime.mcpEventsClient.pollAll();
+    safeLine('EI_MODEL_E2E_PAUSED_POLL', pausedPoll);
     const pauseDeadline = Date.now() + PAUSE_VERIFY_MS;
     while (Date.now() < pauseDeadline) {
       lane.tick(new Date());
@@ -358,6 +365,8 @@ async function main(): Promise<void> {
     });
 
     writeFileSync(headFile, resumedHead);
+    const resumedPoll = await attachedEi.host.runtime.mcpEventsClient.pollAll();
+    safeLine('EI_MODEL_E2E_RESUMED_POLL', resumedPoll);
 
     const deadline = Date.now() + TIMEOUT_MS;
     while (Date.now() < deadline && delivery.value === null) {
