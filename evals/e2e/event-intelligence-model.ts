@@ -173,7 +173,7 @@ async function main(): Promise<void> {
       return { result, calls };
     };
     const requireTool = (
-      calls: Array<{ tool: string; isError?: boolean }>,
+      calls: Array<{ tool: string; isError?: boolean | null }>,
       tool: string,
       phase: string,
     ) => {
