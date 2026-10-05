@@ -52,27 +52,33 @@ const provider = createMcpEventsProvider({
           typeof args.baselineSha === 'string' && args.baselineSha.length > 0
             ? args.baselineSha
             : null;
-        // Use GitHub's public commit Atom feed rather than the REST API.
-        // This fixture intentionally needs no GitHub credential, and shared CI
-        // egress IPs can exhaust the anonymous REST quota independently of EI.
-        const branchPath = branch.split('/').map(encodeURIComponent).join('/');
-        const response = await fetch(
-          `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${branchPath}.atom`,
-          {
-            headers: {
-              Accept: 'application/atom+xml',
-              'User-Agent': 'muffin-ei-transport-fixture',
+        const headFile = process.env.EI_E2E_HEAD_FILE;
+        let current;
+        if (headFile) {
+          current = (await readFile(headFile, 'utf8')).trim();
+        } else {
+          // The live transport test intentionally stays credential-free.
+          // Lifecycle E2E supplies EI_E2E_HEAD_FILE instead, so its correctness
+          // never depends on shared GitHub egress quotas or feed caching.
+          const branchPath = branch.split('/').map(encodeURIComponent).join('/');
+          const response = await fetch(
+            `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${branchPath}.atom`,
+            {
+              headers: {
+                Accept: 'application/atom+xml',
+                'User-Agent': 'muffin-ei-transport-fixture',
+              },
             },
-          },
-        );
-        if (!response.ok) {
-          const body = await response.text();
-          throw new Error(`GitHub Atom feed failed: ${response.status} ${body}`);
+          );
+          if (!response.ok) {
+            const body = await response.text();
+            throw new Error(`GitHub Atom feed failed: ${response.status} ${body}`);
+          }
+          const feed = await response.text();
+          current = feed.match(/\/commit\/([0-9a-f]{40})/i)?.[1];
         }
-        const feed = await response.text();
-        const current = feed.match(/\/commit\/([0-9a-f]{40})/i)?.[1];
         if (!current) {
-          throw new Error('GitHub Atom feed did not contain a commit SHA');
+          throw new Error('GitHub event fixture did not contain a head SHA');
         }
 
         // A natural-language watch does not know a SHA. Its first poll is a
