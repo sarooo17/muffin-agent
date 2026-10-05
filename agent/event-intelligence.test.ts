@@ -101,10 +101,24 @@ describe('embedded EI on Muffin-owned MCP sessions', () => {
       const listed = await sources.handler({}, toolContext());
       expect(listed.content).toContain('demo.ready');
 
+      expect(registered.map((tool) => tool.spec.name)).toEqual(
+        expect.arrayContaining([
+          'event_watch_sources',
+          'event_watch_create',
+          'event_watch_list',
+          'event_watch_inspect',
+          'event_watch_pause',
+          'event_watch_resume',
+          'event_watch_delete',
+          'event_watch_update',
+        ]),
+      );
+
       const create = registered.find((tool) => tool.spec.name === 'event_watch_create');
       if (!create) throw new Error('event_watch_create was not registered');
       const created = await create.handler(
         {
+          trigger_id: 'demo-watch',
           events: [{ event: 'demo.ready', where: [{ path: 'value', op: 'gt', value: 10 }] }],
           instruction: 'Tell me the demo is ready.',
           one_shot: true,
@@ -112,7 +126,44 @@ describe('embedded EI on Muffin-owned MCP sessions', () => {
         toolContext({ turnId: 'source-turn' }),
       );
       expect(created.isError).not.toBe(true);
-      expect(created.content).toContain('event watch armed');
+      expect(created.content).toContain('event watch create: demo-watch');
+
+      const list = registered.find((tool) => tool.spec.name === 'event_watch_list');
+      if (!list) throw new Error('event_watch_list was not registered');
+      const listedWatches = await list.handler(
+        { status: 'active' },
+        toolContext({ turnId: 'list-turn' }),
+      );
+      expect(listedWatches.isError).not.toBe(true);
+      expect(listedWatches.content).toContain('"triggerId": "demo-watch"');
+
+      const pause = registered.find((tool) => tool.spec.name === 'event_watch_pause');
+      if (!pause) throw new Error('event_watch_pause was not registered');
+      const paused = await pause.handler(
+        { trigger_id: 'demo-watch' },
+        toolContext({ turnId: 'pause-turn' }),
+      );
+      expect(paused.isError).not.toBe(true);
+      expect(paused.content).toContain('event watch pause: demo-watch');
+
+      const resume = registered.find((tool) => tool.spec.name === 'event_watch_resume');
+      if (!resume) throw new Error('event_watch_resume was not registered');
+      const resumed = await resume.handler(
+        { trigger_id: 'demo-watch' },
+        toolContext({ turnId: 'resume-turn' }),
+      );
+      expect(resumed.isError).not.toBe(true);
+      expect(resumed.content).toContain('event watch resume: demo-watch');
+
+      const remove = registered.find((tool) => tool.spec.name === 'event_watch_delete');
+      if (!remove) throw new Error('event_watch_delete was not registered');
+      const deleted = await remove.handler(
+        { trigger_id: 'demo-watch' },
+        toolContext({ turnId: 'delete-turn' }),
+      );
+      expect(deleted.isError).not.toBe(true);
+      expect(deleted.content).toContain('event watch delete: demo-watch');
+
       expect(
         traced.some(
           (span) =>
