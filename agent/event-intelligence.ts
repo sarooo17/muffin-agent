@@ -359,6 +359,20 @@ export async function createMuffinEventIntelligence(
   });
 }
 
+type AttachedEventIntelligence = Awaited<ReturnType<typeof createMuffinEventIntelligence>>;
+const attachedEventIntelligence = new WeakMap<object, AttachedEventIntelligence>();
+
+/**
+ * Internal test/diagnostic hook: returns the EI instance already attached to
+ * this runtime. Normal Muffin code does not need this; it exists so end-to-end
+ * tests can drive the same MCP Events client deterministically instead of
+ * relying on wall-clock polling.
+ */
+export function getAttachedEventIntelligence(runtime: object): AttachedEventIntelligence | null {
+  return attachedEventIntelligence.get(runtime) ?? null;
+}
+
+
 function runtimeWakePort(runtime: RuntimePort): EventWakePort {
   return {
     source: (turnId) => runtime.deps.turns.get(turnId),
@@ -384,6 +398,10 @@ export async function attachEventIntelligence(
     adapt: adaptPortableTool,
     register: (tool, portable) => runtime.register(tool, muffinCapabilityFor(portable)),
     onClose: (close) => runtime.onClose(close),
+  });
+  attachedEventIntelligence.set(runtime, embedded);
+  runtime.onClose(async () => {
+    attachedEventIntelligence.delete(runtime);
   });
 
   const diagnostics = await embedded.diagnostics();
