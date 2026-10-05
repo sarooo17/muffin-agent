@@ -186,13 +186,7 @@ function portableTooling() {
           }
         : {}),
     }),
-    control: ({
-      runtimeContext,
-      action,
-    }: {
-      runtimeContext: ToolContext;
-      action: string;
-    }) =>
+    control: ({ runtimeContext, action }: { runtimeContext: ToolContext; action: string }) =>
       runtimeContext.principal.kind === 'owner'
         ? {
             action: 'execute' as const,
@@ -255,11 +249,7 @@ function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool
         if (!sources) {
           return { content: detail, isError: true, tier: CLEAN };
         }
-        const wrapped = fence(
-          'event_sources',
-          detail,
-          'Event Intelligence source discovery error',
-        );
+        const wrapped = fence('event_sources', detail, 'Event Intelligence source discovery error');
         return { content: wrapped.block, isError: true, tier: EXTERNAL };
       }
 
@@ -335,8 +325,7 @@ export async function attachEventIntelligence(
 
   embedded.bind({
     adapt: adaptPortableTool,
-    register: (tool, portable) =>
-      runtime.register(tool, muffinCapabilityFor(portable)),
+    register: (tool, portable) => runtime.register(tool, muffinCapabilityFor(portable)),
     onClose: (close) => runtime.onClose(close),
   });
 
