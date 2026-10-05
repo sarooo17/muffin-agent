@@ -32,6 +32,13 @@ describe('shipped profiles', () => {
     expect(frontier?.thinking).toBe('adaptive');
   });
 
+  it('GPT-6 Luna selects the frontier envelope instead of the conservative fallback', () => {
+    const luna = selectProfile('gpt-6-luna', profiles);
+    expect(luna.name).toBe('frontier');
+    expect(luna.maxToolsExposed).toBe(24);
+    expect(luna.sampling).toBe('model-default');
+  });
+
   /**
    * Changed deliberately, and this is the note the next reader needs: it used to
    * pin `thinking: 'allowed'` and `frontier` used to declare it.
