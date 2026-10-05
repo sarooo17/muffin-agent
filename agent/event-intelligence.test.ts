@@ -294,7 +294,9 @@ describe('MCP event -> EI match -> Muffin Work E2E', () => {
       expect(queued[0]?.text).toContain('Inspect the matched demo event.');
       expect(queued[0]?.text).toContain('"value": 42');
 
-      const wakeTurnId = requiredTurnId(queued[0]!);
+      const wakeInput = queued[0];
+      if (!wakeInput) throw new Error('EI wake turn was not queued');
+      const wakeTurnId = requiredTurnId(wakeInput);
       const wakeContext = toolContext({
         turnId: wakeTurnId,
         principal: { kind: 'system', source: 'event-intelligence' },
@@ -310,9 +312,7 @@ describe('MCP event -> EI match -> Muffin Work E2E', () => {
       );
       expect(wakeList.ok).toBe(true);
       expect(wakeList.data?.triggers).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ triggerId: 'wake-readable-watch' }),
-        ]),
+        expect.arrayContaining([expect.objectContaining({ triggerId: 'wake-readable-watch' })]),
       );
 
       const wakeInspect = await inspect.execute(
