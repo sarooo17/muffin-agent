@@ -131,6 +131,18 @@ async function main(): Promise<void> {
     runtime.memory.store.hasActiveFacts = () => true;
 
     const attachReport = await attachMcp(runtime, home);
+
+    // The fixture's `about` tool exists only to exercise Muffin's normal MCP
+    // pinning/attachment path. It is not part of the event-watch scenario, and
+    // exposing it gives the model an irrelevant medium-risk MCP action that can
+    // trigger an approval detour before it arms EI. Keep the real shared MCP
+    // Events connection attached, but remove this test-only tool from the model
+    // surface.
+    const fixtureAbout = runtime.deps.tools.findIndex(
+      (tool) => tool.spec.name === 'mcp_github-events_about',
+    );
+    if (fixtureAbout >= 0) runtime.deps.tools.splice(fixtureAbout, 1);
+
     const exposure = runtime.recomputeExposure();
     if (attachReport.some((line) => line.includes('attach fallito'))) {
       throw new Error(`EI attach failed: ${attachReport.join(' | ')}`);
