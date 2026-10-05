@@ -2,9 +2,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import {
   createEmbeddedRuntimeIntegration,
-  type EmbeddedRuntimeTooling,
   type EventActivation,
-  type EventIntelligenceCapabilityMetadata,
   type PortableAgentTool,
 } from 'mcp-event-intelligence/embedded';
 import { fence } from '../core/memory/spotlight.js';
@@ -19,6 +17,12 @@ import {
   type TurnInput,
 } from './loop.js';
 import type { McpEventConnection } from './tools/mcp.js';
+
+/**
+ * Muffin owns Work, authority, delivery and MCP credentials. EI stays embedded
+ * and owns durable future conditions/correlation. This adapter only translates
+ * the runtime-neutral EI contracts into Muffin concepts.
+ */
 
 const EXTERNAL: 3 = 3;
 const CLEAN: 0 = 0;
@@ -63,12 +67,6 @@ export type EventWakePort = {
   enqueue(input: TurnInput): string;
 };
 
-type MuffinToolOutcome = Awaited<ReturnType<RegisteredTool['handler']>>;
-
-function isSource(capability: EventIntelligenceCapabilityMetadata): boolean {
-  return capability.operation === 'read' && capability.resource === 'event-source';
-}
-
 function renderWakeText(activation: EventActivation): string {
   const instruction =
     activation.continuation?.instruction ??
@@ -86,7 +84,7 @@ function renderWakeText(activation: EventActivation): string {
 function activationDelivery(port: EventWakePort) {
   return {
     receiptNamespace: 'muffin:event-intelligence',
-    hasReceipt: (id: string) => port.has(id),
+    hasReceipt: (workId: string) => port.has(workId),
     resolveTarget: (target: EventActivation['target']) =>
       target.runtime === 'muffin' && target.kind === 'task' ? port.source(target.id) : null,
     deliver: ({
@@ -116,49 +114,13 @@ function principalFingerprint(ctx: ToolContext): string {
   return createHash('sha256').update(JSON.stringify(ctx.principal)).digest('hex').slice(0, 24);
 }
 
-function failureOutcome(
-  sources: boolean,
-  code: string | undefined,
-  detail: string,
-): MuffinToolOutcome {
-  if (!sources && code === 'EVENT_WATCH_OWNER_REQUIRED') {
-    return { content: detail, isError: true, tier: CLEAN };
-  }
-  const wrapped = fence(
-    sources ? 'event_sources' : 'event_watch',
-    detail,
-    sources
-      ? 'Event Intelligence source discovery error'
-      : 'Event Intelligence trigger error',
-  );
-  return { content: wrapped.block, isError: true, tier: EXTERNAL };
-}
-
-function successOutcome(
-  capability: EventIntelligenceCapabilityMetadata,
-  value: unknown,
-): MuffinToolOutcome {
-  if (isSource(capability)) {
-    const wrapped = fence(
-      'event_sources',
-      JSON.stringify((value as { sources?: unknown[] })?.sources ?? [], null, 2),
-      'event-source metadata from connected MCP servers',
-    );
-    return { content: wrapped.block, tier: EXTERNAL };
-  }
-  const created = value as { triggerId?: unknown; connectionIds?: unknown[] };
+function portableTooling() {
   return {
-    content:
-      `event watch armed: ${String(created.triggerId ?? 'created')}` +
-      ` (connections: ${(created.connectionIds ?? []).join(', ')})`,
-    tier: CLEAN,
-  };
-}
-
-function portableTooling(): EmbeddedRuntimeTooling<ToolContext> {
-  return {
-    names: { sources: 'event_watch_sources', create: 'event_watch_create' },
-    resolveContext: (ctx) => ({
+    names: {
+      sources: 'event_watch_sources',
+      create: 'event_watch_create',
+    },
+    resolveContext: (ctx: ToolContext) => ({
       target: { runtime: 'muffin', kind: 'task', id: ctx.turnId },
       ...(ctx.principal.kind === 'owner'
         ? {
@@ -175,42 +137,29 @@ function portableTooling(): EmbeddedRuntimeTooling<ToolContext> {
           }
         : {}),
     }),
-    control: ({ runtimeContext }) => {
-      if (runtimeContext.principal.kind === 'owner') {
-        return {
-          action: 'execute',
-          execution: { receiptId: `muffin-policy:${runtimeContext.turnId}` },
-        };
-      }
-      const error = {
-        code: 'EVENT_WATCH_OWNER_REQUIRED',
-        message: 'event watches are owner-only in this experimental integration',
-      };
-      return {
-        action: 'return',
-        result: {
-          ok: false,
-          error,
-          hostOutcome: failureOutcome(false, error.code, error.message),
-        },
-      };
-    },
-    projectResult: ({ capability, value }) => ({
-      inline: successOutcome(capability, value),
-    }),
-    projectError: ({ capability, result }) => ({
-      ...result,
-      hostOutcome: failureOutcome(
-        isSource(capability),
-        result.error?.code,
-        result.error?.message ?? 'Event Intelligence tool failed',
-      ),
-    }),
+    control: ({ runtimeContext }: { runtimeContext: ToolContext }) =>
+      runtimeContext.principal.kind === 'owner'
+        ? {
+            action: 'execute' as const,
+            execution: {
+              receiptId: `muffin-policy:${runtimeContext.turnId}`,
+            },
+          }
+        : {
+            action: 'return' as const,
+            result: {
+              ok: false,
+              error: {
+                code: 'EVENT_WATCH_OWNER_REQUIRED',
+                message: 'event watches are owner-only in this experimental integration',
+              },
+            },
+          },
   };
 }
 
 function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool {
-  const sources = isSource(tool.capability);
+  const sources = tool.capability.id === 'event-intelligence.event-sources.list';
   return {
     capability: sources ? eventSourcesCapability.id : eventTriggerCapability.id,
     spec: {
@@ -222,13 +171,36 @@ function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool
     ...(sources ? { keepResult: true } : {}),
     handler: async (args, ctx) => {
       const result = await tool.execute(args, ctx);
-      if (result.ok) return result.data as MuffinToolOutcome;
-      if (result.hostOutcome) return result.hostOutcome as MuffinToolOutcome;
-      return failureOutcome(
-        sources,
-        result.error?.code,
-        result.error?.message ?? 'Event Intelligence tool failed',
-      );
+      if (!result.ok) {
+        const detail = result.error?.message ?? 'Event Intelligence tool failed';
+        if (!sources && result.error?.code === 'EVENT_WATCH_OWNER_REQUIRED') {
+          return { content: detail, isError: true, tier: CLEAN };
+        }
+        const wrapped = fence(
+          sources ? 'event_sources' : 'event_watch',
+          detail,
+          sources
+            ? 'Event Intelligence source discovery error'
+            : 'Event Intelligence trigger error',
+        );
+        return { content: wrapped.block, isError: true, tier: EXTERNAL };
+      }
+
+      if (sources) {
+        const wrapped = fence(
+          'event_sources',
+          JSON.stringify(result.data?.sources ?? [], null, 2),
+          'event-source metadata from connected MCP servers',
+        );
+        return { content: wrapped.block, tier: EXTERNAL };
+      }
+
+      return {
+        content:
+          `event watch armed: ${String(result.data?.triggerId ?? 'created')}` +
+          ` (connections: ${(result.data?.connectionIds ?? []).join(', ')})`,
+        tier: CLEAN,
+      };
     },
   };
 }
@@ -248,9 +220,9 @@ export async function createMuffinEventIntelligence(
 
 function runtimeWakePort(runtime: RuntimePort): EventWakePort {
   return {
-    source: (id) => runtime.deps.turns.get(id),
-    has: (id) => runtime.deps.turns.get(id) !== null,
-    openSession: (id) => runtime.deps.sessions.open(id),
+    source: (turnId) => runtime.deps.turns.get(turnId),
+    has: (workId) => runtime.deps.turns.get(workId) !== null,
+    openSession: (sessionId) => runtime.deps.sessions.open(sessionId),
     enqueue: (input) => enqueueTurn(runtime.deps, input),
   };
 }
