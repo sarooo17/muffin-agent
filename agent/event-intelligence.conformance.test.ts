@@ -146,8 +146,9 @@ describe('Muffin Event Intelligence host conformance', () => {
           );
           const entries = Array.isArray(listed.triggers) ? listed.triggers : [];
           const current =
-            entries.find((entry: { status?: string }) =>
-              entry.status === 'active' || entry.status === 'paused',
+            entries.find(
+              (entry: { status?: string }) =>
+                entry.status === 'active' || entry.status === 'paused',
             ) ?? entries.at(-1);
           if (!current?.version) {
             throw new Error(`No owned Event Intelligence trigger ${triggerId}`);
@@ -254,13 +255,7 @@ describe('Muffin Event Intelligence host conformance', () => {
             );
           },
 
-          async updateTrigger({
-            triggerId,
-            threshold,
-          }: {
-            triggerId: string;
-            threshold: number;
-          }) {
+          async updateTrigger({ triggerId, threshold }: { triggerId: string; threshold: number }) {
             await executePortable(
               'event_watch_update',
               {
