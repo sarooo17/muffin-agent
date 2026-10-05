@@ -20,10 +20,23 @@ describe('embedded EI on Muffin-owned MCP sessions', () => {
     const home = mkdtempSync(join(tmpdir(), 'muffin-ei-'));
     const registered: RegisteredTool[] = [];
     const closeHooks: Array<() => Promise<void>> = [];
+    const traced: Array<{
+      name: string;
+      attributes: Record<string, unknown>;
+      outcome?: unknown;
+    }> = [];
     let listCalls = 0;
 
     const runtime = {
       deps: {
+        tracer: {
+          start: (name: string, attributes: Record<string, unknown> = {}) => ({
+            traceId: 'test-trace',
+            spanId: 'test-span',
+            setAttributes: () => {},
+            end: (outcome?: unknown) => traced.push({ name, attributes, outcome }),
+          }),
+        },
         turns: {
           get: () => null,
         },
@@ -100,6 +113,13 @@ describe('embedded EI on Muffin-owned MCP sessions', () => {
       );
       expect(created.isError).not.toBe(true);
       expect(created.content).toContain('event watch armed');
+      expect(
+        traced.some(
+          (span) =>
+            span.name === 'muffin.event_intelligence' &&
+            span.attributes['muffin.event_intelligence.event'] === 'ei.trigger.created',
+        ),
+      ).toBe(true);
     } finally {
       for (const close of closeHooks) await close();
       rmSync(home, { recursive: true, force: true });

@@ -5,9 +5,14 @@ import {
   type EventActivation,
   type PortableAgentTool,
 } from 'mcp-event-intelligence/embedded';
+import type {
+  EventIntelligenceObservabilityEvent,
+  EventIntelligenceObservabilitySink,
+} from 'mcp-event-intelligence/observability';
 import { fence } from '../core/memory/spotlight.js';
 import type { CapabilityDecl } from '../core/policy/types.js';
 import type { SessionRef } from '../core/session/store.js';
+import { ATTR, type Tracer } from '../core/tracing/types.js';
 import type { TurnRecord } from '../core/turns/store.js';
 import {
   enqueueTurn,
@@ -105,6 +110,31 @@ function activationDelivery(port: EventWakePort) {
         ...(target.replyTo === null ? {} : { replyTo: target.replyTo }),
       }),
     }),
+  };
+}
+
+function muffinEventObservability(tracer: Tracer): EventIntelligenceObservabilitySink {
+  return (event: EventIntelligenceObservabilityEvent) => {
+    const span = tracer.start('muffin.event_intelligence', {
+      [ATTR.eventIntelligenceEvent]: event.event,
+      [ATTR.eventIntelligenceLevel]: event.level,
+      ...(event.traceId ? { [ATTR.eventIntelligenceTraceId]: event.traceId } : {}),
+      ...(event.triggerId ? { [ATTR.eventIntelligenceTriggerId]: event.triggerId } : {}),
+      ...(event.matchId ? { [ATTR.eventIntelligenceMatchId]: event.matchId } : {}),
+      ...(event.wakeId ? { [ATTR.eventIntelligenceWakeId]: event.wakeId } : {}),
+      ...(event.connectionId
+        ? { [ATTR.eventIntelligenceConnectionId]: event.connectionId }
+        : {}),
+      ...(event.status ? { [ATTR.eventIntelligenceStatus]: event.status } : {}),
+      ...(event.attempt !== undefined
+        ? { [ATTR.eventIntelligenceAttempt]: event.attempt }
+        : {}),
+    });
+    span.end(
+      event.level === 'error'
+        ? { status: 'error', error: event.error?.message ?? event.event }
+        : { status: 'ok' },
+    );
   };
 }
 
@@ -207,11 +237,13 @@ export async function createMuffinEventIntelligence(
   connections: readonly McpEventConnection[],
   home: string,
   wakePort: EventWakePort,
+  observability?: EventIntelligenceObservabilitySink,
 ) {
   return createEmbeddedRuntimeIntegration<ToolContext>({
     dataDir: join(home, 'event-intelligence'),
     eventSources: connections,
     activation: activationDelivery(wakePort),
+    ...(observability ? { observability } : {}),
     tooling: portableTooling(),
   });
 }
@@ -234,6 +266,7 @@ export async function attachEventIntelligence(
     connections,
     home,
     runtimeWakePort(runtime),
+    muffinEventObservability(runtime.deps.tracer),
   );
 
   embedded.bind({
