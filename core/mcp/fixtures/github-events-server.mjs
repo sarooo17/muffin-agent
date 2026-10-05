@@ -51,24 +51,27 @@ const provider = createMcpEventsProvider({
           typeof args.baselineSha === 'string' && args.baselineSha.length > 0
             ? args.baselineSha
             : null;
+        // Use GitHub's public commit Atom feed rather than the REST API.
+        // This fixture intentionally needs no GitHub credential, and shared CI
+        // egress IPs can exhaust the anonymous REST quota independently of EI.
+        const branchPath = branch.split('/').map(encodeURIComponent).join('/');
         const response = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`,
+          `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${branchPath}.atom`,
           {
             headers: {
-              Accept: 'application/vnd.github+json',
+              Accept: 'application/atom+xml',
               'User-Agent': 'muffin-ei-transport-fixture',
-              'X-GitHub-Api-Version': '2022-11-28',
             },
           },
         );
         if (!response.ok) {
           const body = await response.text();
-          throw new Error(`GitHub GET ref failed: ${response.status} ${body}`);
+          throw new Error(`GitHub Atom feed failed: ${response.status} ${body}`);
         }
-        const ref = await response.json();
-        const current = ref?.object?.sha;
-        if (typeof current !== 'string' || current.length === 0) {
-          throw new Error('GitHub ref response did not contain object.sha');
+        const feed = await response.text();
+        const current = feed.match(/\\/commit\\/([0-9a-f]{40})/i)?.[1];
+        if (!current) {
+          throw new Error('GitHub Atom feed did not contain a commit SHA');
         }
 
         // A natural-language watch does not know a SHA. Its first poll is a
