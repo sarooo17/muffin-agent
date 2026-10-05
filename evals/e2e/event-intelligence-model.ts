@@ -247,7 +247,7 @@ async function main(): Promise<void> {
     const created = await runOwnerTurn(
       'EI_MODEL_E2E_CREATE',
       `Crea davvero un monitor persistente con id "${WATCH_ID}" che mi avvisi ogni volta che cambia l'HEAD del branch "${BRANCH}" del repo "${REPOSITORY}". ` +
-        'Usa prima event_watch_sources per verificare la sorgente e poi event_watch_create. ' +
+        `Usa prima event_watch_sources per verificare la sorgente e poi event_watch_create. Imposta baselineSha a "${initialHead}" negli arguments dell'evento, così il primo poll confronta esplicitamente contro questo HEAD iniziale. ` +
         'Il monitor deve restare attivo dopo un match, quindi non deve essere one-shot.',
     );
     requireTool(created.calls, 'event_watch_sources', 'create');
@@ -272,6 +272,16 @@ async function main(): Promise<void> {
     if (initialTrigger?.lifecycle?.oneShot !== false) {
       throw new Error(
         `after-create: expected persistent oneShot=false, got ${String(initialTrigger?.lifecycle?.oneShot)}`,
+      );
+    }
+    const initialDefinition = initialPersisted.inspected.trigger as {
+      lifecycle?: { oneShot?: unknown };
+      clauses?: Array<{ arguments?: Record<string, unknown> }>;
+    } | undefined;
+    const persistedBaseline = initialDefinition?.clauses?.[0]?.arguments?.baselineSha;
+    if (persistedBaseline !== initialHead) {
+      throw new Error(
+        `after-create: expected baselineSha=${initialHead}, got ${String(persistedBaseline)}`,
       );
     }
 
