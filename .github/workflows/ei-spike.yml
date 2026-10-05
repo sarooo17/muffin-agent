@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - slice/event-intelligence-spike
+      - chore/ei-v0.11-lifecycle-e2e
 
 permissions:
   contents: read
