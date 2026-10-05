@@ -228,7 +228,14 @@ async function main(): Promise<void> {
         `${label}:list`,
       );
       const entries = Array.isArray(listed.triggers)
-        ? listed.triggers as Array<{ version?: unknown; status?: unknown }>
+        ? listed.triggers as Array<{
+            version?: unknown;
+            status?: unknown;
+            fireCount?: unknown;
+            definition?: {
+              clauses?: Array<{ arguments?: Record<string, unknown> }>;
+            };
+          }>
         : [];
       if (entries.length !== 1 || !entries[0]?.version) {
         throw new Error(
@@ -241,7 +248,7 @@ async function main(): Promise<void> {
         { trigger_id: WATCH_ID, version },
         `${label}:inspect`,
       );
-      return { version, inspected };
+      return { version, entry: entries[0], inspected };
     };
 
     const created = await runOwnerTurn(
@@ -274,14 +281,16 @@ async function main(): Promise<void> {
         `after-create: expected persistent oneShot=false, got ${String(initialTrigger?.lifecycle?.oneShot)}`,
       );
     }
-    const initialDefinition = initialPersisted.inspected.trigger as {
-      lifecycle?: { oneShot?: unknown };
-      clauses?: Array<{ arguments?: Record<string, unknown> }>;
-    } | undefined;
-    const persistedBaseline = initialDefinition?.clauses?.[0]?.arguments?.baselineSha;
+    const persistedBaseline =
+      initialPersisted.entry?.definition?.clauses?.[0]?.arguments?.baselineSha;
     if (persistedBaseline !== initialHead) {
       throw new Error(
         `after-create: expected baselineSha=${initialHead}, got ${String(persistedBaseline)}`,
+      );
+    }
+    if (Number(initialPersisted.entry?.fireCount ?? 0) !== 0) {
+      throw new Error(
+        `after-create: baseline must not fire before the fixture changes; fireCount=${String(initialPersisted.entry?.fireCount)}`,
       );
     }
 
