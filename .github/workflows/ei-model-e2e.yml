@@ -1,0 +1,88 @@
+name: EI Luna model E2E
+
+on:
+  push:
+    branches:
+      - slice/event-intelligence-spike
+
+permissions:
+  contents: write
+
+jobs:
+  luna-e2e:
+    if: contains(github.event.head_commit.message, '[luna-e2e]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EI_E2E_MODEL: gpt-6-luna
+      EI_E2E_REPOSITORY: ${{ github.repository }}
+      EI_E2E_BRANCH: ei-model-e2e-fixture
+      EI_E2E_TIMEOUT_MS: '180000'
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - name: Verify OpenAI test credential
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY repository secret is required for the Luna E2E." >&2
+            exit 1
+          fi
+      - name: Prepare public GitHub branch fixture
+        run: |
+          set -euo pipefail
+          BASE_SHA="$(git rev-parse HEAD~1)"
+          git push origin "$BASE_SHA:refs/heads/$EI_E2E_BRANCH" --force
+          echo "Fixture baseline: $BASE_SHA"
+      - name: Run Muffin -> Luna -> EI -> GitHub event -> wake -> Luna
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/ei-luna-e2e.log"
+          npx tsx evals/e2e/event-intelligence-model.ts >"$LOG" 2>&1 &
+          PID=$!
+
+          armed=0
+          for _ in $(seq 1 120); do
+            if grep -q 'EI_MODEL_E2E_ARMED' "$LOG"; then
+              armed=1
+              break
+            fi
+            if ! kill -0 "$PID" 2>/dev/null; then
+              cat "$LOG"
+              wait "$PID"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [ "$armed" -ne 1 ]; then
+            cat "$LOG"
+            kill "$PID" 2>/dev/null || true
+            wait "$PID" 2>/dev/null || true
+            echo "Luna did not arm the EI watch in time." >&2
+            exit 1
+          fi
+
+          # Let the read-only MCP Events provider observe its initial baseline.
+          sleep 3
+          git push origin "$GITHUB_SHA:refs/heads/$EI_E2E_BRANCH" --force
+
+          set +e
+          wait "$PID"
+          status=$?
+          set -e
+          cat "$LOG"
+
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+          grep -q 'EI_MODEL_E2E_COMPLETE' "$LOG"
+      - name: Remove branch fixture
+        if: always()
+        run: git push origin --delete "$EI_E2E_BRANCH" || true
