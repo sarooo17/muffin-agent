@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import {
   createEmbeddedRuntimeIntegration,
   type EventActivation,
+  type EventIntelligenceCapabilityMetadata,
   type PortableAgentTool,
+  type PortableToolResult,
 } from 'mcp-event-intelligence/embedded';
 import { fence } from '../core/memory/spotlight.js';
 import type { CapabilityDecl } from '../core/policy/types.js';
@@ -20,8 +22,8 @@ import type { McpEventConnection } from './tools/mcp.js';
 
 /**
  * Muffin owns Work, authority, delivery and MCP credentials. EI stays embedded
- * and owns durable future conditions/correlation. This adapter only translates
- * the runtime-neutral EI contracts into Muffin concepts.
+ * and owns durable future conditions/correlation. This adapter translates only
+ * the runtime-neutral EI boundary into Muffin concepts.
  */
 
 const EXTERNAL: 3 = 3;
@@ -67,12 +69,7 @@ export type EventWakePort = {
   enqueue(input: TurnInput): string;
 };
 
-function workIdForEventWake(wakeId: string): string {
-  return createHash('sha256')
-    .update(`muffin:event-intelligence:${wakeId}`)
-    .digest('hex')
-    .slice(0, 32);
-}
+type MuffinToolOutcome = Awaited<ReturnType<RegisteredTool['handler']>>;
 
 function renderWakeText(activation: EventActivation): string {
   const instruction =
@@ -90,8 +87,7 @@ function renderWakeText(activation: EventActivation): string {
 
 function activationDelivery(port: EventWakePort) {
   return {
-    receiptId: ({ activation }: { activation: EventActivation }) =>
-      workIdForEventWake(activation.wake.wakeId),
+    receiptNamespace: 'muffin:event-intelligence',
     hasReceipt: (workId: string) => port.has(workId),
     resolveTarget: (target: EventActivation['target']) =>
       target.runtime === 'muffin' && target.kind === 'task' ? port.source(target.id) : null,
@@ -122,6 +118,29 @@ function principalFingerprint(ctx: ToolContext): string {
   return createHash('sha256').update(JSON.stringify(ctx.principal)).digest('hex').slice(0, 24);
 }
 
+function isSourceCapability(capability: EventIntelligenceCapabilityMetadata): boolean {
+  return capability.operation === 'read' && capability.resource === 'event-source';
+}
+
+function errorOutcome(
+  capability: EventIntelligenceCapabilityMetadata,
+  code: string | undefined,
+  detail: string,
+): MuffinToolOutcome {
+  const sources = isSourceCapability(capability);
+  if (!sources && code === 'EVENT_WATCH_OWNER_REQUIRED') {
+    return { content: detail, isError: true, tier: CLEAN };
+  }
+  const wrapped = fence(
+    sources ? 'event_sources' : 'event_watch',
+    detail,
+    sources
+      ? 'Event Intelligence source discovery error'
+      : 'Event Intelligence trigger error',
+  );
+  return { content: wrapped.block, isError: true, tier: EXTERNAL };
+}
+
 function portableTooling() {
   return {
     names: {
@@ -145,29 +164,83 @@ function portableTooling() {
           }
         : {}),
     }),
-    control: ({ runtimeContext }: { runtimeContext: ToolContext }) =>
-      runtimeContext.principal.kind === 'owner'
-        ? {
-            action: 'execute' as const,
-            execution: {
-              receiptId: `muffin-policy:${runtimeContext.turnId}`,
-            },
-          }
-        : {
-            action: 'return' as const,
-            result: {
-              ok: false,
-              error: {
-                code: 'EVENT_WATCH_OWNER_REQUIRED',
-                message: 'event watches are owner-only in this experimental integration',
-              },
-            },
-          },
+    control: ({ runtimeContext }: { runtimeContext: ToolContext }) => {
+      if (runtimeContext.principal.kind === 'owner') {
+        return {
+          action: 'execute' as const,
+          execution: { receiptId: `muffin-policy:${runtimeContext.turnId}` },
+        };
+      }
+      const error = {
+        code: 'EVENT_WATCH_OWNER_REQUIRED',
+        message: 'event watches are owner-only in this experimental integration',
+      };
+      return {
+        action: 'return' as const,
+        result: {
+          ok: false,
+          error,
+          hostOutcome: errorOutcome(eventTriggerCapabilityMetadata, error.code, error.message),
+        },
+      };
+    },
+    projectResult: ({
+      capability,
+      value,
+    }: {
+      capability: EventIntelligenceCapabilityMetadata;
+      value: unknown;
+    }) => {
+      if (isSourceCapability(capability)) {
+        const sources = (value as { sources?: unknown[] })?.sources ?? [];
+        const wrapped = fence(
+          'event_sources',
+          JSON.stringify(sources, null, 2),
+          'event-source metadata from connected MCP servers',
+        );
+        return { inline: { content: wrapped.block, tier: EXTERNAL } };
+      }
+      const created = value as {
+        triggerId?: unknown;
+        connectionIds?: unknown[];
+      };
+      return {
+        inline: {
+          content:
+            `event watch armed: ${String(created.triggerId ?? 'created')}` +
+            ` (connections: ${(created.connectionIds ?? []).join(', ')})`,
+          tier: CLEAN,
+        },
+      };
+    },
+    projectError: ({
+      capability,
+      result,
+    }: {
+      capability: EventIntelligenceCapabilityMetadata;
+      result: PortableToolResult;
+    }) => ({
+      ...result,
+      hostOutcome: errorOutcome(
+        capability,
+        result.error?.code,
+        result.error?.message ?? 'Event Intelligence tool failed',
+      ),
+    }),
   };
 }
 
+const eventTriggerCapabilityMetadata: EventIntelligenceCapabilityMetadata = {
+  id: 'event-intelligence.trigger.create',
+  operation: 'create',
+  resource: 'trigger',
+  effect: 'durable-state',
+  durability: 'durable',
+  hostControl: 'required',
+};
+
 function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool {
-  const sources = tool.capability.id === 'event-intelligence.event-sources.list';
+  const sources = isSourceCapability(tool.capability);
   return {
     capability: sources ? eventSourcesCapability.id : eventTriggerCapability.id,
     spec: {
@@ -179,36 +252,13 @@ function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool
     ...(sources ? { keepResult: true } : {}),
     handler: async (args, ctx) => {
       const result = await tool.execute(args, ctx);
-      if (!result.ok) {
-        const detail = result.error?.message ?? 'Event Intelligence tool failed';
-        if (!sources && result.error?.code === 'EVENT_WATCH_OWNER_REQUIRED') {
-          return { content: detail, isError: true, tier: CLEAN };
-        }
-        const wrapped = fence(
-          sources ? 'event_sources' : 'event_watch',
-          detail,
-          sources
-            ? 'Event Intelligence source discovery error'
-            : 'Event Intelligence trigger error',
-        );
-        return { content: wrapped.block, isError: true, tier: EXTERNAL };
-      }
-
-      if (sources) {
-        const wrapped = fence(
-          'event_sources',
-          JSON.stringify(result.data?.sources ?? [], null, 2),
-          'event-source metadata from connected MCP servers',
-        );
-        return { content: wrapped.block, tier: EXTERNAL };
-      }
-
-      return {
-        content:
-          `event watch armed: ${String(result.data?.triggerId ?? 'created')}` +
-          ` (connections: ${(result.data?.connectionIds ?? []).join(', ')})`,
-        tier: CLEAN,
-      };
+      if (result.ok) return result.data as MuffinToolOutcome;
+      if (result.hostOutcome) return result.hostOutcome as MuffinToolOutcome;
+      return errorOutcome(
+        tool.capability,
+        result.error?.code,
+        result.error?.message ?? 'Event Intelligence tool failed',
+      );
     },
   };
 }
@@ -220,9 +270,7 @@ export async function createMuffinEventIntelligence(
 ) {
   return createEmbeddedRuntimeIntegration<ToolContext>({
     dataDir: join(home, 'event-intelligence'),
-    eventSources: {
-      list: () => connections,
-    },
+    eventSources: connections,
     activation: activationDelivery(wakePort),
     tooling: portableTooling(),
   });
@@ -248,27 +296,20 @@ export async function attachEventIntelligence(
     runtimeWakePort(runtime),
   );
 
-  for (const portable of embedded.tools) {
-    const tool = adaptPortableTool(portable);
-    runtime.register(
-      tool,
-      tool.capability === eventSourcesCapability.id
-        ? eventSourcesCapability
-        : eventTriggerCapability,
-    );
-  }
-  runtime.onClose(() => embedded.close());
+  embedded.bind({
+    adapt: adaptPortableTool,
+    register: (tool) =>
+      runtime.register(
+        tool,
+        tool.capability === eventSourcesCapability.id
+          ? eventSourcesCapability
+          : eventTriggerCapability,
+      ),
+    onClose: (close) => runtime.onClose(close),
+  });
 
-  const statuses = await embedded.status();
-  const ready = Array.isArray(statuses)
-    ? statuses.filter((row) => {
-        if (!row || typeof row !== 'object') return false;
-        const status = row as Record<string, unknown>;
-        return status.error == null && Array.isArray(status.events) && status.events.length > 0;
-      }).length
-    : 0;
-
+  const diagnostics = await embedded.diagnostics();
   return [
-    `event-intelligence — attivo, ${connections.length} connessioni MCP condivise, ${ready} Events-capable`,
+    `event-intelligence — attivo, ${connections.length} connessioni MCP condivise, ${diagnostics.eventsCapable} Events-capable`,
   ];
 }
