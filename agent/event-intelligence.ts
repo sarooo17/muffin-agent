@@ -58,10 +58,7 @@ type RuntimePort = {
   onClose(hook: () => Promise<void>): void;
 };
 
-type EventWakeSource = Pick<
-  TurnRecord,
-  'id' | 'tenant' | 'surface' | 'sessionId' | 'replyTo'
->;
+type EventWakeSource = Pick<TurnRecord, 'id' | 'tenant' | 'surface' | 'sessionId' | 'replyTo'>;
 
 export type EventWakePort = {
   source(turnId: string): EventWakeSource | null;
@@ -122,13 +119,9 @@ function muffinEventObservability(tracer: Tracer): EventIntelligenceObservabilit
       ...(event.triggerId ? { [ATTR.eventIntelligenceTriggerId]: event.triggerId } : {}),
       ...(event.matchId ? { [ATTR.eventIntelligenceMatchId]: event.matchId } : {}),
       ...(event.wakeId ? { [ATTR.eventIntelligenceWakeId]: event.wakeId } : {}),
-      ...(event.connectionId
-        ? { [ATTR.eventIntelligenceConnectionId]: event.connectionId }
-        : {}),
+      ...(event.connectionId ? { [ATTR.eventIntelligenceConnectionId]: event.connectionId } : {}),
       ...(event.status ? { [ATTR.eventIntelligenceStatus]: event.status } : {}),
-      ...(event.attempt !== undefined
-        ? { [ATTR.eventIntelligenceAttempt]: event.attempt }
-        : {}),
+      ...(event.attempt !== undefined ? { [ATTR.eventIntelligenceAttempt]: event.attempt } : {}),
     });
     span.end(
       event.level === 'error'
