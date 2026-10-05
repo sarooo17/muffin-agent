@@ -3,10 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runHostConformance } from 'mcp-event-intelligence/conformance';
 import { describe, expect, it } from 'vitest';
-import {
-  createMuffinEventIntelligence,
-  type EventWakePort,
-} from './event-intelligence.js';
+import { createMuffinEventIntelligence, type EventWakePort } from './event-intelligence.js';
 import { toolContext } from './fixtures/tool-context.js';
 import type { TurnInput } from './loop.js';
 
@@ -20,11 +17,7 @@ describe('Muffin Event Intelligence host conformance', () => {
     const adapter = {
       name: 'muffin-agent',
 
-      async createHarness({
-        observability,
-      }: {
-        observability: (event: unknown) => void;
-      }) {
+      async createHarness({ observability }: { observability: (event: unknown) => void }) {
         const home = mkdtempSync(join(tmpdir(), 'muffin-ei-conformance-'));
         const deliveries: Array<{
           triggerId: string;
@@ -112,12 +105,7 @@ describe('Muffin Event Intelligence host conformance', () => {
         };
 
         const start = async () => {
-          embedded = await createMuffinEventIntelligence(
-            [connection],
-            home,
-            port,
-            observability,
-          );
+          embedded = await createMuffinEventIntelligence([connection], home, port, observability);
         };
 
         await start();
