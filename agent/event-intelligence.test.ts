@@ -272,7 +272,10 @@ describe('MCP event -> EI match -> Muffin Work E2E', () => {
             },
           ],
           instruction: 'Inspect the matched demo event.',
-          one_shot: true,
+          // Keep it active after the wake so the assertion below reaches
+          // Muffin's authority boundary instead of the one-shot lifecycle
+          // filter returning TRIGGER_NOT_FOUND first.
+          one_shot: false,
         },
         toolContext({ turnId: source.id }),
       );
