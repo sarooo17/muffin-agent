@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import {
   createActivationDispatcher,
-  createEmbeddedEventIntelligence,
+  createEmbeddedRuntimeIntegration,
   createEventIntelligenceAgentTools,
+  createEventSourceRegistry,
   type EventActivation,
   type PortableAgentTool,
 } from 'mcp-event-intelligence/embedded';
@@ -147,42 +148,55 @@ function principalFingerprint(ctx: ToolContext): string {
 }
 
 function resolvePortableContext(ctx: ToolContext) {
-  if (ctx.principal.kind !== 'owner') {
-    const error = new Error('event watches are owner-only in this experimental integration');
-    (error as Error & { code?: string }).code = 'EVENT_WATCH_OWNER_REQUIRED';
-    throw error;
-  }
   return {
     target: { runtime: 'muffin', kind: 'task', id: ctx.turnId },
-    actor: {
-      type: 'agent',
-      principal_id: 'muffin:event-intelligence',
-      tenant_id: ctx.tenant,
-    },
-    owner: {
-      type: 'owner',
-      principal_id: `muffin:${principalFingerprint(ctx)}`,
-      tenant_id: ctx.tenant,
-    },
+    ...(ctx.principal.kind === 'owner'
+      ? {
+          actor: {
+            type: 'agent',
+            principal_id: 'muffin:event-intelligence',
+            tenant_id: ctx.tenant,
+          },
+          owner: {
+            type: 'owner',
+            principal_id: `muffin:${principalFingerprint(ctx)}`,
+            tenant_id: ctx.tenant,
+          },
+        }
+      : {}),
   };
 }
 
-function portableToolOptions() {
+function portableTooling() {
   return {
     names: {
       sources: 'event_watch_sources',
       create: 'event_watch_create',
     },
     resolveContext: (ctx: ToolContext) => resolvePortableContext(ctx),
-    authorize: ({ runtimeContext }: { runtimeContext: ToolContext }) => ({
-      allowed: runtimeContext.principal.kind === 'owner',
-      confirmationId: `muffin-policy:${runtimeContext.turnId}`,
-    }),
+    control: ({ runtimeContext }: { runtimeContext: ToolContext }) =>
+      runtimeContext.principal.kind === 'owner'
+        ? {
+            action: 'execute' as const,
+            execution: {
+              receiptId: `muffin-policy:${runtimeContext.turnId}`,
+            },
+          }
+        : {
+            action: 'return' as const,
+            result: {
+              ok: false,
+              error: {
+                code: 'EVENT_WATCH_OWNER_REQUIRED',
+                message: 'event watches are owner-only in this experimental integration',
+              },
+            },
+          },
   };
 }
 
 function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool {
-  const sources = tool.name === 'event_watch_sources';
+  const sources = tool.capability.id === 'event-intelligence.event-sources.list';
   return {
     capability: sources ? eventSourcesCapability.id : eventTriggerCapability.id,
     spec: {
@@ -231,7 +245,7 @@ function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool
 export function makeEventIntelligenceTools(host: EventIntelligenceHost): RegisteredTool[] {
   return createEventIntelligenceAgentTools({
     host,
-    ...portableToolOptions(),
+    ...portableTooling(),
   }).map(adaptPortableTool);
 }
 
@@ -247,16 +261,17 @@ export async function attachEventIntelligence(
     enqueue: (input) => enqueueTurn(runtime.deps, input),
   };
 
-  const embedded = await createEmbeddedEventIntelligence<ToolContext>({
+  const embedded = await createEmbeddedRuntimeIntegration<ToolContext>({
     dataDir: join(home, 'event-intelligence'),
-    mcp: {
-      listConnections: () => connections,
-    },
+    eventSources: createEventSourceRegistry({
+      list: () => connections,
+    }),
     activation: activationDelivery(wakePort),
-    agentTools: portableToolOptions(),
+    tooling: portableTooling(),
   });
 
-  for (const tool of embedded.tools.map(adaptPortableTool)) {
+  for (const portable of embedded.toolCatalog.all) {
+    const tool = adaptPortableTool(portable);
     runtime.register(
       tool,
       tool.capability === eventSourcesCapability.id
