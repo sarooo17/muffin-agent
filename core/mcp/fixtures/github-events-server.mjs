@@ -3,6 +3,7 @@
 // It observes public GitHub branch state through the live GitHub REST API.
 // The test driver mutates the branch from outside this process; this server is
 // read-only and only reports a change through MCP Events.
+import { readFile } from 'node:fs/promises';
 import { McpServer, ProtocolError } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import {
