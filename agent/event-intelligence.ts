@@ -243,7 +243,7 @@ export async function createMuffinEventIntelligence(
     dataDir: join(home, 'event-intelligence'),
     eventSources: connections,
     activation: activationDelivery(wakePort),
-    observability,
+    ...(observability ? { observability } : {}),
     tooling: portableTooling(),
   });
 }
