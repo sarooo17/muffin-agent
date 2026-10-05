@@ -71,6 +71,7 @@ liveDescribe('real MCP stdio -> GitHub -> EI -> Muffin Work', () => {
       surface: 'telegram',
       sessionId: 'owner',
       replyTo: { chatId: '42' },
+      principal: { kind: 'owner', connector: 'cli', externalId: 'local' } as const,
     };
     const port: EventWakePort = {
       source: (id) => (id === source.id ? source : null),
