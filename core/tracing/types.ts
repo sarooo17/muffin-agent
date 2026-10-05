@@ -21,7 +21,8 @@ export type SpanName =
   | 'muffin.tool_call'
   | 'muffin.policy_decision'
   | 'muffin.light.attempt'
-  | 'muffin.judgment.shadow';
+  | 'muffin.judgment.shadow'
+  | 'muffin.event_intelligence';
 
 export type SpanStatus = 'ok' | 'error';
 
@@ -80,6 +81,17 @@ export const ATTR = {
   /** Which attempt this is. 0 on a turn that never died and never waited. */
   turnResume: 'muffin.turn.resume',
   stopReason: 'muffin.stop_reason',
+
+  // --- embedded Event Intelligence operational observability ---
+  eventIntelligenceEvent: 'muffin.event_intelligence.event',
+  eventIntelligenceLevel: 'muffin.event_intelligence.level',
+  eventIntelligenceTraceId: 'muffin.event_intelligence.trace_id',
+  eventIntelligenceTriggerId: 'muffin.event_intelligence.trigger_id',
+  eventIntelligenceMatchId: 'muffin.event_intelligence.match_id',
+  eventIntelligenceWakeId: 'muffin.event_intelligence.wake_id',
+  eventIntelligenceConnectionId: 'muffin.event_intelligence.connection_id',
+  eventIntelligenceStatus: 'muffin.event_intelligence.status',
+  eventIntelligenceAttempt: 'muffin.event_intelligence.attempt',
 } as const;
 
 export interface Tracer {
