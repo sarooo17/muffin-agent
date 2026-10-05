@@ -387,7 +387,7 @@ async function main(): Promise<void> {
 
     const updated = await runOwnerTurn(
       'EI_MODEL_E2E_UPDATE',
-      `Aggiorna il monitor persistente "${WATCH_ID}" usando event_watch_update: continua a monitorare lo stesso branch "${BRANCH}" del repo "${REPOSITORY}", ma cambia l'istruzione di continuazione in "Segnala il nuovo HEAD e confrontalo con quello precedente". Non renderlo one-shot.`,
+      `Aggiorna il monitor persistente "${WATCH_ID}" usando event_watch_update. La versione corrente è "${resumedPersisted.version}": usa expected_version="${resumedPersisted.version}" e crea esplicitamente version="2". Continua a monitorare lo stesso branch "${BRANCH}" del repo "${REPOSITORY}" con baselineSha "${initialHead}", ma imposta esattamente l'istruzione di continuazione a "Segnala il nuovo HEAD e confrontalo con quello precedente". Non renderlo one-shot.`,
     );
     requireTool(updated.calls, 'event_watch_update', 'update');
     const updatedPersisted = await inspectCurrentWatch('after-update');
