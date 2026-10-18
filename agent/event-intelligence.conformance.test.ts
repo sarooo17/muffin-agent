@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runHostConformance } from 'mcp-event-intelligence/conformance';
@@ -307,6 +307,19 @@ describe('Muffin Event Intelligence host conformance', () => {
     };
 
     const report = await runHostConformance(adapter, { profile: 'management' });
+    if (process.env.EI_CANDIDATE_CONFORMANCE === '1') {
+      writeFileSync('ei-host-conformance-report.json', JSON.stringify({
+        ...report,
+        host: 'muffin-agent',
+        testMode: 'EI candidate tarball, fork-only',
+        independentAdapterAuthorVerified: false,
+        notes: [
+          'Host runtime authored by Muffin; adapter validation authored by EI maintainer',
+          'Local durable store restart, not actual OS-process SIGKILL',
+          'Synthetic MCP Events connection, not live network or provider',
+        ],
+      }, null, 2) + '\\n');
+    }
     expect(report.passed, JSON.stringify(report, null, 2)).toBe(true);
     expect(report.adapter).toBe('muffin-agent');
     expect(report.profile).toBe('management');
