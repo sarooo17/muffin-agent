@@ -91,7 +91,9 @@ export type EventWakePort = {
   source(turnId: string): EventWakeSource | null;
   has(workId: string): boolean;
   openSession(sessionId: string): SessionRef;
-  enqueue(input: TurnInput): string;
+  // Optional correlation metadata is supplied by EI but owned by the host.
+  // It prevents external Turn receipt IDs from being mistaken for EI wake IDs.
+  enqueue(input: TurnInput, wake?: { triggerId: string; wakeId: string }): string;
 };
 
 function renderWakeText(activation: EventActivation): string {
@@ -201,6 +203,9 @@ function activationDelivery(port: EventWakePort, wakeOwners: WakeOwnerBindings) 
             contentTaint: EXTERNAL,
             inputOrigin: 'external',
             ...(target.replyTo === null ? {} : { replyTo: target.replyTo }),
+          }, {
+            triggerId: activation.trigger.triggerId,
+            wakeId: activation.wake.wakeId,
           });
           // Preserve only explanatory read scope for the wake. Mutations below
           // still require the real owner principal.
@@ -335,24 +340,41 @@ function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool
   };
 }
 
+/**
+ * Muffin-owned integration boundary. The old embedded adapter and the
+ * candidate canonical facade reuse the exact same wake/owner/control logic.
+ * The host still owns Turn receipts, policy and tool exposure.
+ */
+export function createMuffinEventIntelligenceHostCallbacks(wakePort: EventWakePort) {
+  const wakeOwners = new WakeOwnerBindings();
+  const activation = activationDelivery(wakePort, wakeOwners);
+  const tooling = portableTooling(wakeOwners);
+  return {
+    activation,
+    tooling,
+    runtime: { ...activation, ...tooling },
+    clear: () => wakeOwners.clear(),
+  };
+}
+
 export async function createMuffinEventIntelligence(
   connections: readonly McpEventConnection[],
   home: string,
   wakePort: EventWakePort,
   observability?: EventIntelligenceObservabilitySink,
 ) {
-  const wakeOwners = new WakeOwnerBindings();
+  const boundary = createMuffinEventIntelligenceHostCallbacks(wakePort);
   const embedded = await createEmbeddedRuntimeIntegration<ToolContext>({
     dataDir: join(home, 'event-intelligence'),
     eventSources: connections,
-    activation: activationDelivery(wakePort, wakeOwners),
+    activation: boundary.activation,
     ...(observability ? { observability } : {}),
-    tooling: portableTooling(wakeOwners),
+    tooling: boundary.tooling,
   });
   return Object.freeze({
     ...embedded,
     async close() {
-      wakeOwners.clear();
+      boundary.clear();
       await embedded.close();
     },
   });

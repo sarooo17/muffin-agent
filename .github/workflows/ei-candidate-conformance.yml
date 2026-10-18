@@ -1,0 +1,84 @@
+name: EI v1 candidate host conformance
+
+on:
+  pull_request:
+    paths:
+      - "agent/event-intelligence.ts"
+      - "agent/event-intelligence.conformance.test.ts"
+      - "agent/event-intelligence-candidate.test.ts"
+      - "agent/event-intelligence-process.test.ts"
+      - "agent/fixtures/event-intelligence-process-worker.ts"
+      - ".github/workflows/ei-candidate-conformance.yml"
+      - "docs/evidence/ei-v1-fork-host-conformance.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  muffin-candidate-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout upstream-dev-based Muffin fork test branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Muffin's unmodified, pinned dependencies
+        run: npm ci
+
+      - name: Checkout exactly reviewed EI candidate (no publication)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: sarooo17/event-intelligence
+          ref: 6ff40250afc67c259e8b784a7eb9ec03d9184fa9
+          path: .ei-candidate-source
+          persist-credentials: false
+
+      - name: Pack the EI candidate
+        working-directory: .ei-candidate-source
+        run: |
+          npm ci --ignore-scripts
+          npm pack --pack-destination "${RUNNER_TEMP}"
+
+      - name: Override only this CI job's installed EI (do not edit lockfile)
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts \
+            "${RUNNER_TEMP}/mcp-event-intelligence-0.11.0.tgz"
+          node --input-type=module -e '
+            import { createEventIntelligence } from "mcp-event-intelligence/embedded";
+            if (typeof createEventIntelligence !== "function") {
+              throw new Error("EI candidate HostContract facade missing from installed tarball");
+            }
+          '
+          git diff --exit-code -- package.json package-lock.json
+
+      - name: Compile host against candidate API
+        run: npm run typecheck
+
+      - name: Run existing Muffin EI tests and strict v3 candidate conformance
+        env:
+          EI_CANDIDATE_CONFORMANCE: "1"
+        run: |
+          npx vitest run \
+            agent/event-intelligence.test.ts \
+            agent/event-intelligence.conformance.test.ts \
+            agent/event-intelligence-candidate.test.ts \
+            agent/event-intelligence-process.test.ts \
+            agent/event-intelligence-authority.test.ts \
+            agent/event-intelligence-discovery.test.ts \
+            agent/event-intelligence-recovery.test.ts \
+            agent/event-intelligence-restart.test.ts
+
+      - name: Retain exact-host conformance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: muffin-ei-v1-host-conformance
+          path: ei-host-conformance-report.json
+          if-no-files-found: warn
