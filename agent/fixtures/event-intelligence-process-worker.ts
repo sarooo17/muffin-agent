@@ -8,6 +8,7 @@ import type { TurnInput } from '../loop.js';
 const [mode, home] = process.argv.slice(2);
 if (!home || (mode !== 'first' && mode !== 'reopen')) throw new Error('usage: first|reopen <home>');
 const receiptPath = join(home!, 'host-turn-receipts.json');
+const checkedHostReceiptIds: string[] = [];
 type TurnReceipt = { receiptId: string; wakeId: string; triggerId: string };
 const loadReceipts = (): TurnReceipt[] =>
   existsSync(receiptPath) ? JSON.parse(readFileSync(receiptPath, 'utf8')) as TurnReceipt[] : [];
@@ -21,13 +22,18 @@ const sourceTurn = {
 };
 const port: EventWakePort = {
   source: id => id === sourceTurn.id ? sourceTurn : null,
-  has: id => loadReceipts().some(row => row.receiptId === id),
+  has: id => {
+    checkedHostReceiptIds.push(id);
+    return loadReceipts().some(row => row.receiptId === id);
+  },
   openSession: id => ({ id, file: join(home!, id + '.jsonl') }),
   enqueue: (input: TurnInput, wake) => {
     const receiptId = input.id;
     if (!receiptId || !wake?.wakeId || !wake.triggerId) {
       throw new Error('Muffin Turn receipt and EI wake IDs must remain distinct');
     }
+    assert.notEqual(wake.wakeId, receiptId,
+      'EI wakeId and Muffin deterministic Turn receipt must be distinct');
     const existing = loadReceipts();
     if (!existing.some(row => row.receiptId === receiptId)) {
       existing.push({ receiptId, wakeId: wake.wakeId, triggerId: wake.triggerId });
@@ -117,6 +123,7 @@ if (mode === 'first') {
   const wake = await host.host.store.getWakeDelivery(first[0]!.wakeId);
   assert.equal(wake?.status, 'delivered');
   assert.equal(wake?.runtimeReceiptId, first[0]!.receiptId);
+  assert.notEqual(first[0]!.wakeId, first[0]!.receiptId);
   // Parent sends SIGKILL only AFTER observing this line, leaving no chance
   // for graceful host close or in-memory EI state to be reused.
   process.stdout.write('READY ' + JSON.stringify({ wakeId: first[0]!.wakeId, receiptId: first[0]!.receiptId }) + '\n');
@@ -127,6 +134,13 @@ if (mode === 'first') {
   const persisted = await host.host.store.getWakeDelivery(first[0]!.wakeId);
   assert.equal(persisted?.status, 'delivered', 'EI receipt was not persisted across SIGKILL');
   assert.equal(persisted?.runtimeReceiptId, first[0]!.receiptId);
+  assert.notEqual(first[0]!.wakeId, first[0]!.receiptId);
+  // Explicitly call the actual reopened Muffin port's persisted receipt
+  // lookup. Source-event dedup may otherwise short-circuit before EI invokes
+  // hasReceipt() for a previously delivered event.
+  assert.equal(port.has(first[0]!.receiptId), true,
+    'new PID could not read the host Turn receipt persisted by prior PID');
+  assert.ok(checkedHostReceiptIds.includes(first[0]!.receiptId));
   const trigger = (await host.host.store.listTriggers())
     .find((entry: { triggerId?: string }) => entry.triggerId === 'process-watch');
   assert.ok(trigger, 'reopened EI durable trigger missing');
@@ -143,6 +157,8 @@ if (mode === 'first') {
     firstWakeId: first[0]!.wakeId,
     firstReceiptId: first[0]!.receiptId,
     deduplicatedAfterSigkill: true,
+    hostReceiptReopenLookupVerified: true,
+    postCrashPendingWakeRetryVerified: false,
     freshAfterSigkill: true,
     hostReceiptPersistence: 'fixture-json-file',
     eiPersistence: 'EI-store-jsonl',
