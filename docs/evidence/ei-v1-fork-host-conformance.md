@@ -12,15 +12,21 @@
 
 The fork test extracts existing Muffin `activationDelivery()` and `portableTooling()` through a small `createMuffinEventIntelligenceHostCallbacks()` factory. Both the existing shipped embedded adapter and the new opt-in candidate facade use **the same code for Muffin owner identity, policy denial, Turn enqueue and receipt lookup**, without granting EI permission to bypass Muffin.
 
-The retained upstream Muffin conformance fixture executes the public EI **v3** management contract: trigger create/list/pause/resume/update/delete, match/no-match, replay, a true EI storage close/reopen and authoritative `getWakeDelivery(wakeId)` after restart. This is a local-process restart, **not** SIGKILL or full OS-process recovery. It additionally asserts a machine-readable `event-intelligence.host-conformance.v3` report with exactly seven passing scenarios.
+With the candidate gate enabled, the existing Muffin fixture now runs the **entire public EI v3 management contract through the new canonical `createEventIntelligence()` facade and negotiated HostContract v1**, using the production Muffin callback factory. With the gate disabled it continues testing the existing pinned 0.11.0 integration. The seven canonical v3 scenarios prove: trigger create/list/pause/resume/update/delete, match/no-match, replay, a true EI storage close/reopen and authoritative `getWakeDelivery(wakeId)` after restart. This is a local-process restart, **not** SIGKILL or full OS-process recovery. It additionally asserts a machine-readable `event-intelligence.host-conformance.v3` report with exactly seven passing scenarios.
 
-A separate candidate-only test runs `createEventIntelligence()` on the actual Muffin host callback factory, requiring `mcp.registry`, `storage.durable`, `wake.receipts`, `tooling.owner-scoped`. It asserts invalid missing receipts fail before startup, immutable negotiation, denied system-authority creation without persisted state mutation, approved owner creation, host-managed registry detach/reattach, host-owned system Turn wake, and no duplicate Turn on replay after storage reopen.
+An additional candidate-only test independently probes `createEventIntelligence()` on the actual Muffin host callback factory, requiring `mcp.registry`, `storage.durable`, `wake.receipts`, `tooling.owner-scoped`. It asserts invalid missing receipts fail before startup, immutable negotiation, denied system-authority creation without persisted state mutation, approved owner creation, host-managed registry detach/reattach, host-owned system Turn wake, and no duplicate Turn on replay after storage reopen.
 
 ## Running / recording the evidence
 
 The fork PR job `EI v1 candidate host conformance / muffin-candidate-host` installs the candidate and runs the TypeScript compiler plus the seven focused Muffin EI test files. It writes and uploads `ei-host-conformance-report.json` when the v3 host test completes.
 
 Integration LOC accounting must be computed from the actual final Git diff, separately counting the ~15-line reusable host callback factory, the test fixture and the CI workflow. This is not a claim that a full independent host integration fits 30 LOC. The actual Muffin adapter logic remains significantly larger because Muffin owns Turn/policy/tool translation.
+
+## Actual CI result, 2026-10-18
+
+The complete candidate/host run [#39134522074](https://github.com/sarooo17/muffin-agent/actions/runs/39134522074) passed on exact commit `eff3a0db8ad2674394af18ccb6ca4816eba5deee`: compiler green, **7/7 Muffin EI test files and 10/10 tests**, including **all 7/7 v3 conformance scenarios through the canonical v1 facade**. The JSON report is retained in the Actions artifact. The integration fixture was changed to observe the actual EI wakeId separately from Muffin's deterministic Turn receipt ID, so durable delivery is checked against the correct key.
+
+The inherited general `verifica` workflow includes a legal DCO check that remains red for the coding-tool-created, unsigned commits. The owner must certify/sign the commits personally before this PR can merge. This DCO state is distinct from the successful targeted EI contract test, and must not be bypassed by attributing a sign-off to the owner without their own attestation.
 
 ## Unproven requirements blocking issue #42
 
