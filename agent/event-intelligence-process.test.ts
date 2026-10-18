@@ -45,6 +45,7 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
         const ready = await first.awaitLine('READY ');
         expect(ready.wakeId).toBeTruthy();
         expect(ready.receiptId).toBeTruthy();
+        expect(ready.receiptId).not.toBe(ready.wakeId);
         first.child.kill('SIGKILL');
         const killed = await first.exited;
         expect(killed.signal).toBe('SIGKILL');
@@ -57,6 +58,8 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
           schema: 'muffin.ei-host.process-restart.v1',
           passed: true,
           deduplicatedAfterSigkill: true,
+          hostReceiptReopenLookupVerified: true,
+          postCrashPendingWakeRetryVerified: false,
           freshAfterSigkill: true,
           hostReceiptPersistence: 'fixture-json-file',
           actualNetworkMcp: false,
