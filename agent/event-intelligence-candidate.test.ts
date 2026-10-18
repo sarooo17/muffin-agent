@@ -79,6 +79,8 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
         pollIntervalMs: 60_000,
       };
 
+      let approvalPendingFor: string | null = null;
+      const interruptedActions: string[] = [];
       let connected = [connection];
       let registryChanged: (() => void) | null = null;
       let unsubscribeCount = 0;
@@ -99,7 +101,27 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
               return () => { registryChanged = null; unsubscribeCount++; };
             },
           },
-          runtime: boundary.runtime,
+          runtime: {
+            ...boundary.runtime,
+            // Host-owned approval/interrupt contract: EI must return this
+            // result unchanged and must not persist a denied mutation.
+            control: (request: Parameters<typeof boundary.runtime.control>[0]) => {
+              if (request.action === approvalPendingFor) {
+                interruptedActions.push(request.action);
+                return {
+                  action: 'return',
+                  result: {
+                    ok: false,
+                    error: {
+                      code: 'MUFFIN_APPROVAL_REQUIRED',
+                      message: 'Await approval in the existing host authority path',
+                    },
+                  },
+                };
+              }
+              return boundary.runtime.control(request);
+            },
+          },
           hostContract: {
             version: '1',
             required: [
@@ -149,6 +171,37 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
           toolContext({ turnId: sourceTurn.id }),
         );
         expect(allowed.ok, JSON.stringify(allowed.error)).toBe(true);
+
+        // Host approval/interrupt has precedence over all five durable
+        // mutations. One approved owner creates the watch above; a later
+        // host-owned approval decision must not be treated as permission.
+        const original = JSON.stringify([
+          await integration.host.store.listTriggers(),
+          await integration.host.store.listTriggerStates(),
+        ]);
+        for (const [action, input] of [
+          ['create', { ...trigger, trigger_id: 'approval-blocked' }],
+          ['pause', { trigger_id: 'muffin-v1-watch' }],
+          ['resume', { trigger_id: 'muffin-v1-watch' }],
+          ['update', { ...trigger, trigger_id: 'muffin-v1-watch' }],
+          ['delete', { trigger_id: 'muffin-v1-watch' }],
+        ] as const) {
+          const tool = integration.toolCatalog.get('trigger_' + action);
+          expect(tool, action).toBeTruthy();
+          approvalPendingFor = 'trigger.' + action;
+          const blocked = await tool.execute(input, toolContext({ turnId: sourceTurn.id }));
+          approvalPendingFor = null;
+          expect(blocked.ok, action).toBe(false);
+          expect(blocked.error?.code, action).toBe('MUFFIN_APPROVAL_REQUIRED');
+          expect(JSON.stringify([
+            await integration.host.store.listTriggers(),
+            await integration.host.store.listTriggerStates(),
+          ]), action + ' modified persisted state before host approval').toBe(original);
+        }
+        expect(interruptedActions).toEqual([
+          'trigger.create', 'trigger.pause', 'trigger.resume',
+          'trigger.update', 'trigger.delete',
+        ]);
 
         // The subscription callback MUST perform reconciliation by itself.
         // Calling refreshMcpRegistry() or diagnostics() here would conceal a
