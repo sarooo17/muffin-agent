@@ -90,8 +90,11 @@ describe('Muffin Event Intelligence host conformance', () => {
             id: sessionId,
             file: join(home, `${sessionId.replaceAll(':', '_')}.jsonl`),
           }),
-          enqueue: (input) => {
+          enqueue: (input, wake) => {
             const runtimeReceiptId = requiredTurnId(input);
+            if (!wake?.wakeId || !wake.triggerId) {
+              throw new Error('conformance wake missing EI identity');
+            }
             persistedReceipts.add(runtimeReceiptId);
             const replyTo = input.replyTo;
             if (
@@ -102,9 +105,12 @@ describe('Muffin Event Intelligence host conformance', () => {
             ) {
               throw new Error('conformance delivery lost its Muffin source turn');
             }
+            if (wake.triggerId !== replyTo.conformanceTriggerId) {
+              throw new Error('Muffin source/trigger correlation changed');
+            }
             deliveries.push({
-              triggerId: replyTo.conformanceTriggerId,
-              wakeId: runtimeReceiptId,
+              triggerId: wake.triggerId,
+              wakeId: wake.wakeId,
               runtimeReceiptId,
             });
             return runtimeReceiptId;
