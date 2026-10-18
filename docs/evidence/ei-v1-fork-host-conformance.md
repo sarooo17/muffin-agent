@@ -28,10 +28,20 @@ The complete candidate/host run [#39134522074](https://github.com/sarooo17/muffi
 
 The inherited general `verifica` workflow includes a legal DCO check that remains red for the coding-tool-created, unsigned commits. The owner must certify/sign the commits personally before this PR can merge. This DCO state is distinct from the successful targeted EI contract test, and must not be bypassed by attributing a sign-off to the owner without their own attestation.
 
+## Additional end-to-end validation (2026-10-18)
+
+Exact code HEAD `2798e1019a502f7ce604e27e856c84a5e9c29a94` completed the dedicated [packed EI candidate fork CI run #39135917929](https://github.com/sarooo17/muffin-agent/actions/runs/39135917929), including **TypeScript success, 8/8 EI test files and 11/11 tests**.
+
+- **Real OS process termination/relaunch:** `agent/event-intelligence-process.test.ts` spawns an actual child process loading the candidate npm tarball through the Muffin host boundary; kills the first process with `SIGKILL` after the wake receipt is durable; starts a new OS process and confirms preserved EI wake-delivery receipt, host receipt idempotency on source event replay, and one fresh Turn queued on a distinct event. The host-side receipt for this fixture is persisted in a dedicated JSON file, **not a live production Muffin TurnStore database**. The EI store uses durable JSONL. No PostgreSQL or network transport is certified here.
+- **Five host-owned mutation interrupts:** the candidate facade test supplies an interruption callback on top of actual Muffin callback implementations; owner-scoped create/pause/resume/update/delete each receives a host-owned `MUFFIN_APPROVAL_REQUIRED` response and is verified to leave durable trigger definitions and lifecycle state byte-for-byte unchanged. Successful transitions prepare valid paused/active states to make sure the approval callback is genuinely reached (rather than short-circuited by a missing trigger).
+- **Subscription notifications:** registry detach and reattach are driven **only** by the host subscription callback; the test observes connection count going to zero and back to one **without** a direct `refreshMcpRegistry()` or `diagnostics()` call that could mask broken notifications.
+
+No real remote MCP server disconnect/transport is claimed; the registry source is a deterministic host-owned fixture, though actual EI attach/detach and callback code executes. The code added to the fork is authored by the EI maintainer and **cannot satisfy independent adapter authorship**. Normal upstream Muffin remains unchanged.
+
 ## Unproven requirements blocking issue #42
 
 1. Independent author review and independently authored host conformance adapter (the fork itself does not establish that).
-2. Full lifecycle coverage across the canonical facade: host policy interrupts and approvals for **every** mutating operation, real MCP registry transport detach/reattach, and actual process restart/replay under the v1 facade.
+2. Real remote MCP network transport reconnect/interrupt and production TurnStore-backed restart proof remain outside the synthetic fixture scope. The canonical facade's five mutation interrupts and a real OS SIGKILL/reopen **are now covered** on the fork candidate test, using the documented fixture boundaries.
 3. Final canonical API/export clean-up, stable error-matrix audit and breaking-change notes with evidence in the EI repository. These must be verified before checking the aggregate acceptance criteria.
 
 Keep #42 **OPEN** until the above are verified; do not treat one green local CI result as external adoption certification.
