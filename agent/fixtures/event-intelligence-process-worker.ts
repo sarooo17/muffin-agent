@@ -6,7 +6,7 @@ import { toolContext } from './tool-context.js';
 import type { TurnInput } from '../loop.js';
 
 const [mode, home] = process.argv.slice(2);
-if (!home || !['first', 'reopen'].includes(mode)) throw new Error('usage: first|reopen <home>');
+if (!home || (mode !== 'first' && mode !== 'reopen')) throw new Error('usage: first|reopen <home>');
 const receiptPath = join(home!, 'host-turn-receipts.json');
 type TurnReceipt = { receiptId: string; wakeId: string; triggerId: string };
 const loadReceipts = (): TurnReceipt[] =>
