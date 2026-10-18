@@ -335,24 +335,41 @@ function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool
   };
 }
 
+/**
+ * Muffin-owned integration boundary. The old embedded adapter and the
+ * candidate canonical facade reuse the exact same wake/owner/control logic.
+ * The host still owns Turn receipts, policy and tool exposure.
+ */
+export function createMuffinEventIntelligenceHostCallbacks(wakePort: EventWakePort) {
+  const wakeOwners = new WakeOwnerBindings();
+  const activation = activationDelivery(wakePort, wakeOwners);
+  const tooling = portableTooling(wakeOwners);
+  return {
+    activation,
+    tooling,
+    runtime: { ...activation, ...tooling },
+    clear: () => wakeOwners.clear(),
+  };
+}
+
 export async function createMuffinEventIntelligence(
   connections: readonly McpEventConnection[],
   home: string,
   wakePort: EventWakePort,
   observability?: EventIntelligenceObservabilitySink,
 ) {
-  const wakeOwners = new WakeOwnerBindings();
+  const boundary = createMuffinEventIntelligenceHostCallbacks(wakePort);
   const embedded = await createEmbeddedRuntimeIntegration<ToolContext>({
     dataDir: join(home, 'event-intelligence'),
     eventSources: connections,
-    activation: activationDelivery(wakePort, wakeOwners),
+    activation: boundary.activation,
     ...(observability ? { observability } : {}),
-    tooling: portableTooling(wakeOwners),
+    tooling: boundary.tooling,
   });
   return Object.freeze({
     ...embedded,
     async close() {
-      wakeOwners.clear();
+      boundary.clear();
       await embedded.close();
     },
   });
