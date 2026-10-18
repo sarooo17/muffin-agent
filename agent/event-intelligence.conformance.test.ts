@@ -318,7 +318,7 @@ describe('Muffin Event Intelligence host conformance', () => {
           'Local durable store restart, not actual OS-process SIGKILL',
           'Synthetic MCP Events connection, not live network or provider',
         ],
-      }, null, 2) + '\\n');
+      }, null, 2) + '\n');
     }
     expect(report.passed, JSON.stringify(report, null, 2)).toBe(true);
     expect(report.adapter).toBe('muffin-agent');
