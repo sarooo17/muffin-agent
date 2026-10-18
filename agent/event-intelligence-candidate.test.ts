@@ -150,14 +150,25 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
         );
         expect(allowed.ok, JSON.stringify(allowed.error)).toBe(true);
 
-        // Reconcile the registry with host-owned detach and reattach callbacks.
+        // The subscription callback MUST perform reconciliation by itself.
+        // Calling refreshMcpRegistry() or diagnostics() here would conceal a
+        // broken notification listener. Observe the actual registered MCP
+        // connection map, first detached, then reattached.
+        const awaitRegistryCount = async (count: number) => {
+          for (let attempt = 0; attempt < 100; attempt++) {
+            const actual = (await integration.host.mcpStatus()).length;
+            if (actual === count) return;
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+          expect((await integration.host.mcpStatus()).length).toBe(count);
+        };
+        expect(typeof registryChanged).toBe('function');
         connected = [];
         (registryChanged as (() => void) | null)?.();
-        await integration.host.refreshMcpRegistry();
+        await awaitRegistryCount(0);
         connected = [connection];
         (registryChanged as (() => void) | null)?.();
-        await integration.host.refreshMcpRegistry();
-        expect((await integration.diagnostics()).connections).toBe(1);
+        await awaitRegistryCount(1);
 
         const event = {
           traceId: 'muffin-v1-event',
