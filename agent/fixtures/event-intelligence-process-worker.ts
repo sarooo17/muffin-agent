@@ -7,7 +7,7 @@ import type { TurnInput } from '../loop.js';
 
 const [mode, home] = process.argv.slice(2);
 if (!home || !['first', 'reopen'].includes(mode)) throw new Error('usage: first|reopen <home>');
-const receiptPath = join(home, 'host-turn-receipts.json');
+const receiptPath = join(home!, 'host-turn-receipts.json');
 type TurnReceipt = { receiptId: string; wakeId: string; triggerId: string };
 const loadReceipts = (): TurnReceipt[] =>
   existsSync(receiptPath) ? JSON.parse(readFileSync(receiptPath, 'utf8')) as TurnReceipt[] : [];
@@ -22,7 +22,7 @@ const sourceTurn = {
 const port: EventWakePort = {
   source: id => id === sourceTurn.id ? sourceTurn : null,
   has: id => loadReceipts().some(row => row.receiptId === id),
-  openSession: id => ({ id, file: join(home, id + '.jsonl') }),
+  openSession: id => ({ id, file: join(home!, id + '.jsonl') }),
   enqueue: (input: TurnInput, wake) => {
     const receiptId = input.id;
     if (!receiptId || !wake?.wakeId || !wake.triggerId) {
@@ -70,7 +70,7 @@ const candidate = await import('mcp-event-intelligence/embedded') as unknown as 
 };
 const boundary = createMuffinEventIntelligenceHostCallbacks(port);
 const host = await candidate.createEventIntelligence({
-  dataDir: join(home, 'event-intelligence'),
+  dataDir: join(home!, 'event-intelligence'),
   env: {
     TYPESAFE_API_KEY: '', RUNTIME_WAKE_TARGETS_JSON: '{}',
     TEMPORAL_TICK_MS: '100000', WAKE_RETRY_TICK_MS: '100000',
