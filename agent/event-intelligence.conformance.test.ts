@@ -14,7 +14,7 @@ function requiredTurnId(input: TurnInput): string {
 }
 
 describe('Muffin Event Intelligence host conformance', () => {
-  it('passes the public EI v0.11 management host contract through Muffin tools', async () => {
+  it('passes the public EI management host contract through Muffin tools', async () => {
     const adapter = {
       name: 'muffin-agent',
 
@@ -216,6 +216,19 @@ describe('Muffin Event Intelligence host conformance', () => {
             return [...deliveries];
           },
 
+          async readWakeReceipt(wakeId: string) {
+            if (!embedded) throw new Error('EI host not started');
+            // Read authoritative durable EI state, including after reopen;
+            // the in-memory Muffin delivery observer is not evidence.
+            const persisted = await embedded.host.store.getWakeDelivery(wakeId);
+            return persisted
+              ? {
+                  status: persisted.status,
+                  runtimeReceiptId: persisted.runtimeReceiptId,
+                }
+              : null;
+          },
+
           async restart() {
             await embedded?.close();
             embedded = null;
@@ -298,6 +311,11 @@ describe('Muffin Event Intelligence host conformance', () => {
     expect(report.adapter).toBe('muffin-agent');
     expect(report.profile).toBe('management');
     expect(report.summary.failed).toBe(0);
+    if (process.env.EI_CANDIDATE_CONFORMANCE === '1') {
+      expect(report.schema).toBe('event-intelligence.host-conformance.v3');
+      expect(report.summary.total).toBe(7);
+      expect(report.summary.passed).toBe(7);
+    }
     expect(report.observability.eventNames).toContain('ei.trigger.created');
     expect(report.observability.eventNames).toContain('ei.match.matched');
     expect(report.observability.eventNames).toContain('ei.wake.delivered');
