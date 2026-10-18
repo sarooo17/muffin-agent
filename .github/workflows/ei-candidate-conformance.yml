@@ -6,6 +6,8 @@ on:
       - "agent/event-intelligence.ts"
       - "agent/event-intelligence.conformance.test.ts"
       - "agent/event-intelligence-candidate.test.ts"
+      - "agent/event-intelligence-process.test.ts"
+      - "agent/fixtures/event-intelligence-process-worker.ts"
       - ".github/workflows/ei-candidate-conformance.yml"
       - "docs/evidence/ei-v1-fork-host-conformance.md"
   workflow_dispatch:
@@ -67,6 +69,7 @@ jobs:
             agent/event-intelligence.test.ts \
             agent/event-intelligence.conformance.test.ts \
             agent/event-intelligence-candidate.test.ts \
+            agent/event-intelligence-process.test.ts \
             agent/event-intelligence-authority.test.ts \
             agent/event-intelligence-discovery.test.ts \
             agent/event-intelligence-recovery.test.ts \
