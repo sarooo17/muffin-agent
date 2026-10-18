@@ -175,10 +175,6 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
         // Host approval/interrupt has precedence over all five durable
         // mutations. One approved owner creates the watch above; a later
         // host-owned approval decision must not be treated as permission.
-        const original = JSON.stringify([
-          await integration.host.store.listTriggers(),
-          await integration.host.store.listTriggerStates(),
-        ]);
         for (const [action, input] of [
           ['create', { ...trigger, trigger_id: 'approval-blocked' }],
           ['pause', { trigger_id: 'muffin-v1-watch' }],
@@ -186,6 +182,22 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
           ['update', { ...trigger, trigger_id: 'muffin-v1-watch' }],
           ['delete', { trigger_id: 'muffin-v1-watch' }],
         ] as const) {
+          // Resume is only meaningful after an approved pause. Each denied
+          // operation is exercised against a valid source lifecycle state:
+          // otherwise EI may correctly reject before reaching host control().
+          if (action === 'resume' || action === 'update') {
+            const setupAction = action === 'resume' ? 'pause' : 'resume';
+            const setupTool = integration.toolCatalog.get('trigger_' + setupAction);
+            const setup = await setupTool.execute(
+              { trigger_id: 'muffin-v1-watch' },
+              toolContext({ turnId: sourceTurn.id }),
+            );
+            expect(setup.ok, 'setup ' + setupAction).toBe(true);
+          }
+          const original = JSON.stringify([
+            await integration.host.store.listTriggers(),
+            await integration.host.store.listTriggerStates(),
+          ]);
           const tool = integration.toolCatalog.get('trigger_' + action);
           expect(tool, action).toBeTruthy();
           approvalPendingFor = 'trigger.' + action;
