@@ -152,10 +152,10 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
 
         // Reconcile the registry with host-owned detach and reattach callbacks.
         connected = [];
-        registryChanged?.();
+        (registryChanged as (() => void) | null)?.();
         await integration.host.refreshMcpRegistry();
         connected = [connection];
-        registryChanged?.();
+        (registryChanged as (() => void) | null)?.();
         await integration.host.refreshMcpRegistry();
         expect((await integration.diagnostics()).connections).toBe(1);
 
