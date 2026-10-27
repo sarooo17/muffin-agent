@@ -59,6 +59,9 @@ jobs:
           '
           git diff --exit-code -- package.json package-lock.json
 
+      - name: Rebuild Muffin's native SQLite dependency (npm ci skipped prepare)
+        run: npm rebuild better-sqlite3
+
       - name: Compile host against candidate API
         run: npm run typecheck
 
