@@ -47,7 +47,11 @@ jobs:
           const require=createRequire(import.meta.url);
           const declared=JSON.parse(readFileSync('package.json','utf8'));
           const lock=JSON.parse(readFileSync('package-lock.json','utf8'));
-          const installed=require('mcp-event-intelligence/package.json');
+          const {dirname,join}=require('node:path');
+          // package.json is intentionally not a public package export.
+          const pkgEntry=require.resolve('mcp-event-intelligence/embedded');
+          const installed=JSON.parse(readFileSync(
+            join(dirname(pkgEntry),'../package.json'),'utf8'));
           const version='0.12.0-next.0';
           assert.equal(declared.dependencies['mcp-event-intelligence'],version);
           assert.equal(lock.packages[''].dependencies['mcp-event-intelligence'],version);
