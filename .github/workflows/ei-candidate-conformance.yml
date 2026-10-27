@@ -30,8 +30,8 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Install Muffin's unmodified, pinned dependencies
-        run: npm ci
+      - name: Install Muffin's pinned dependencies without invoking its old prepare/compile
+        run: npm ci --ignore-scripts
 
       - name: Checkout exactly reviewed EI candidate (no publication)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
