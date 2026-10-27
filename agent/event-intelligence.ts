@@ -131,21 +131,19 @@ class WakeOwnerBindings {
 }
 
 function activationEvent(activation: EventActivation, receiptId: string): RuntimeEvent {
-  const envelope = activation as EventActivation & {
-    wakeId?: unknown;
-    triggerId?: unknown;
-    matchId?: unknown;
-  };
+  const envelope = activation as EventActivation &
+    Partial<Record<'wakeId' | 'triggerId' | 'matchId', unknown>>;
+  const evidence: Record<string, string> = {};
+  for (const key of ['wakeId', 'triggerId', 'matchId'] as const) {
+    const value = envelope[key];
+    if (typeof value === 'string') evidence[key] = value;
+  }
   return {
     occurrenceId: receiptId,
     kind: 'external.condition.matched',
     source: 'event-intelligence',
     observedAt: new Date().toISOString(),
-    evidence: {
-      ...(typeof envelope.wakeId === 'string' ? { wakeId: envelope.wakeId } : {}),
-      ...(typeof envelope.triggerId === 'string' ? { triggerId: envelope.triggerId } : {}),
-      ...(typeof envelope.matchId === 'string' ? { matchId: envelope.matchId } : {}),
-    },
+    evidence,
   };
 }
 
