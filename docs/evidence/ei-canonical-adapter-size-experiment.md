@@ -69,19 +69,35 @@ on fork commit `fd552683368c677298d325d5db40a2e802dc318b`
 completed **8/8 test files and 11/11 tests**, including the real adapter
 factory. The candidate is still unpublished and the PR remains unmerged.
 
-## Single-path cutover experiment (candidate-only)
+## Single-path cutover measurement (2026-10-27)
 
-This stacked branch entirely removes the legacy `createEmbeddedRuntimeIntegration()`
-startup path from `agent/event-intelligence.ts`. It invokes the canonical
-`createEventIntelligence()` for every call. Failure to find the candidate
-export is explicit, never a silent downgrade to EI 0.11.0. The pinned 0.11.0
-manifest/lockfile therefore **cannot run this branch without installing the
-candidate**. CI overlays only a tested, source-pinned candidate tarball.
+This PR removes the legacy `createEmbeddedRuntimeIntegration()` adapter
+path. The production factory calls the **typed, canonical**
+`createEventIntelligence<ToolContext, EventWakeSource>()` directly. All
+Muffin-owned policy, tenant/owner correlation, receipt checks, Turn creation,
+taint fencing, transport credentials and native tool translation remain in
+the same adapter file; none were extracted to hide LOC.
 
-Physical LOC of this adapter: **415**; nonblank LOC:
-**383**. The exact baseline remains **398 / 365**.
-The line count includes all host-specific behavior, including the policy and
-turn/receipt mapper: nothing has been hidden in another local adapter file.
-This is an independent experiment branch, **not a deployable consumer upgrade**
-until a real candidate dependency pin and lockfile are available and the
-normal Muffin CI passes. Current #15/#16 review and DCO gates still apply.
+| Comparable adapter | Physical LOC | Nonblank LOC |
+| --- | ---: | ---: |
+| Original Muffin `dev` + EI 0.11.0 | 398 | 365 |
+| Fork #16 (two adapter paths) | 427 | 395 |
+| Fork #17 (canonical-only) | 392 | 361 |
+
+Source: `agent/event-intelligence.ts` on the declared fork commits.
+The number counts the **whole adapter**, not only the declarative config.
+This measurement does not imply a major ergonomics improvement: the
+host-specific policy/turn/tool glue dominates its LOC.
+
+Candidate compatibility: the repo's old manifest and lockfile still pin
+`mcp-event-intelligence@0.11.0` which **does not expose this API**.
+The candidate CI installs a tarball built from exact EI commit
+`4aa23a74a397c98a6d5e7158491e210a20a9844e`, compiles Muffin
+against it, and runs the existing EI tests with canonical conformance.
+Regular PR workflows remain invalid against stock 0.11 until a reviewed
+prerelease is published and consumer-owned manifests/lockfiles are updated.
+That release is not authorized by the tests alone; do not merge this branch.
+
+Review: EI #268 must be independently reviewed on its latest source HEAD;
+Muffin #15's owner-side DCO, #16, and this PR require independent review.
+No npm publish, upstream Muffin change, or production deployment is claimed.
