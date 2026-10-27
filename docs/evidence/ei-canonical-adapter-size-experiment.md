@@ -116,3 +116,23 @@ source-refresh commit changes only the experimental workflow pin and
 evidence record. It is NOT production upgrade, evidence of reduction, or DCO
 attestation. Require all 8 focused test files, 11 tests, fresh HEAD review
 and actual GitHub Actions success.
+
+## Published npm prerelease and exact dependency pin (2026-10-27)
+
+The upstream manually authorized npm **0.12.0-next.0** publication is
+confirmed by [Publish npm run #40554825385](https://github.com/sarooo17/event-intelligence/actions/runs/40554825385)
+with the `next` dist-tag and signed provenance. This commit makes a
+**consumer-owned** upgrade: `package.json` and the complete `package-lock.json`
+pin `mcp-event-intelligence@0.12.0-next.0`; the lock imports all 14 newly
+required `pg` runtime transitive package entries from the reviewed EI lock
+and pins the exact published tarball by its shasum-derived SRI.
+
+The conformance workflow now installs with the normal `npm ci --ignore-scripts`
+and asserts the actual npm package's version and `createEventIntelligence`
+export. It no longer overlays the source checkout or uses temporary tarballs.
+The regular Muffin workflows must also pass; only a full real-consumer
+installation and latest-head Codex/DCO gates can justify merging.
+
+A source-pinned candidate test is *not* an independent external adoption
+proof; this is still owner-maintained. Keep parent stacked PRs #15 and #16
+separately gated until they are rebased/cleaned up.

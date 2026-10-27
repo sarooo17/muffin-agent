@@ -1,8 +1,10 @@
-name: EI v1 candidate host conformance
+name: EI npm prerelease host conformance
 
 on:
   pull_request:
     paths:
+      - "package.json"
+      - "package-lock.json"
       - "agent/event-intelligence.ts"
       - "agent/event-intelligence.conformance.test.ts"
       - "agent/event-intelligence-candidate.test.ts"
@@ -33,48 +35,36 @@ jobs:
       - name: Install Muffin's pinned dependencies without invoking its old prepare/compile
         run: npm ci --ignore-scripts
 
-      - name: Checkout exactly reviewed EI candidate (no publication)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: sarooo17/event-intelligence
-          ref: 96d2f1ac04a9a4196fffdbae0ad2df410a3cc447
-          path: .ei-candidate-source
-          persist-credentials: false
-
-      - name: Pack the EI candidate
-        working-directory: .ei-candidate-source
+      - name: Verify actual npm prerelease pin, integrity and canonical API
+        shell: bash
         run: |
-          npm ci --ignore-scripts
-          # CI-only versioned snapshot, NOT an npm publication or Git tag.
-          npm version 0.12.0-next.0 --no-git-tag-version --ignore-scripts
-          node --input-type=module -e '
-            import { readFileSync, writeFileSync } from "node:fs";
-            const manifest = JSON.parse(readFileSync("server.json", "utf8"));
-            manifest.version = "0.12.0-next.0";
-            manifest.packages = manifest.packages.map(p => ({...p, version: "0.12.0-next.0"}));
-            writeFileSync("server.json", JSON.stringify(manifest, null, 2));
-          '
-          npm pack --pack-destination "${RUNNER_TEMP}"
-
-      - name: Override only this CI job's installed EI (do not edit lockfile)
-        run: |
-          npm install --no-save --package-lock=false --ignore-scripts \
-            "${RUNNER_TEMP}/mcp-event-intelligence-0.12.0-next.0.tgz"
-          node --input-type=module -e '
-            import { createEventIntelligence } from "mcp-event-intelligence/embedded";
-            if (typeof createEventIntelligence !== "function") {
-              throw new Error("EI candidate HostContract facade missing from installed tarball");
-            }
-          '
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          import { createRequire } from 'node:module';
+          import { createEventIntelligence } from 'mcp-event-intelligence/embedded';
+          const require=createRequire(import.meta.url);
+          const declared=JSON.parse(readFileSync('package.json','utf8'));
+          const lock=JSON.parse(readFileSync('package-lock.json','utf8'));
+          const installed=require('mcp-event-intelligence/package.json');
+          const version='0.12.0-next.0';
+          assert.equal(declared.dependencies['mcp-event-intelligence'],version);
+          assert.equal(lock.packages[''].dependencies['mcp-event-intelligence'],version);
+          assert.equal(lock.packages['node_modules/mcp-event-intelligence'].version,version);
+          assert.equal(installed.version,version);
+          assert.equal(typeof createEventIntelligence,'function');
+          console.log('EI real npm prerelease '+version+' installed and canonical API available');
+          EOF
           git diff --exit-code -- package.json package-lock.json
 
       - name: Rebuild Muffin's native SQLite dependency (npm ci skipped prepare)
         run: npm rebuild better-sqlite3
 
-      - name: Compile host against candidate API
+      - name: Compile host against published npm candidate API
         run: npm run typecheck
 
-      - name: Run existing Muffin EI tests and strict v3 candidate conformance
+      - name: Run Muffin EI tests and strict v3 against actual npm prerelease
         env:
           EI_CANDIDATE_CONFORMANCE: "1"
         run: |
@@ -87,14 +77,6 @@ jobs:
             agent/event-intelligence-discovery.test.ts \
             agent/event-intelligence-recovery.test.ts \
             agent/event-intelligence-restart.test.ts
-
-      - name: Upload source-pinned EI prerelease candidate bundle (not npm)
-        if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: ei-0.12.0-next.0-source-96d2f1a
-          path: ${{ runner.temp }}/mcp-event-intelligence-0.12.0-next.0.tgz
-          if-no-files-found: error
 
       - name: Retain exact-host conformance evidence
         if: always()
