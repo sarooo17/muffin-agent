@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createMuffinEventIntelligenceHostCallbacks, type EventWakePort } from './event-intelligence.js';
+import { createMuffinEventIntelligence, createMuffinEventIntelligenceHostCallbacks, type EventWakePort } from './event-intelligence.js';
 import { toolContext } from './fixtures/tool-context.js';
 import type { TurnInput } from './loop.js';
 
@@ -134,6 +134,22 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
 
       let integration: any;
       try {
+        // Exercise the real Muffin attachment factory with the canonical
+        // candidate, not only the fixture's direct facade construction.
+        const attached = await createMuffinEventIntelligence(
+          [connection], join(home, 'production-adapter-probe'), port,
+        );
+        try {
+          expect(attached.hostContract).toMatchObject({
+            schema: 'event-intelligence.host-contract.v1',
+            readiness: 'configuration-validated',
+          });
+          expect(attached.toolCatalog.all).toHaveLength(8);
+          expect((await attached.diagnostics()).connections).toBe(1);
+        } finally {
+          await attached.close();
+        }
+
         integration = await boot();
         expect(integration.hostContract).toMatchObject({
           schema: 'event-intelligence.host-contract.v1',

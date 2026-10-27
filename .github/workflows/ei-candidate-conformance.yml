@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: sarooo17/event-intelligence
-          ref: 6ff40250afc67c259e8b784a7eb9ec03d9184fa9
+          ref: 729eb901c604bba0edfa35746cb90235c0db301c
           path: .ei-candidate-source
           persist-credentials: false
 
