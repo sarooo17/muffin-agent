@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import {
-  createEmbeddedRuntimeIntegration,
   type EventActivation,
   type EmbeddedRuntimeIntegration,
   type PortableAgentTool,
@@ -319,9 +318,8 @@ function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool
 }
 
 /**
- * Muffin-owned integration boundary. The old embedded adapter and the
- * candidate canonical facade reuse the exact same wake/owner/control logic.
- * The host still owns Turn receipts, policy and tool exposure.
+ * Host-owned wake/owner/control boundary reused by the conformance fixture.
+ * Muffin retains Turn receipts, policy and tool exposure.
  */
 export function createMuffinEventIntelligenceHostCallbacks(wakePort: EventWakePort) {
   const wakeOwners = new WakeOwnerBindings();
@@ -343,41 +341,31 @@ export async function createMuffinEventIntelligence(
 ) {
   const boundary = createMuffinEventIntelligenceHostCallbacks(wakePort);
   const dataDir = join(home, 'event-intelligence');
-  // Candidate-only: stock Muffin remains pinned to 0.11.0. CI overlays an
-  // immutable candidate tarball; a missing facade must fail, not fall back.
-  const embedded = process.env.EI_CANDIDATE_CONFORMANCE === '1'
-    ? await (async () => {
-        const candidate = await import('mcp-event-intelligence/embedded') as
-          typeof import('mcp-event-intelligence/embedded') & {
-            createEventIntelligence?: (options: {
-              dataDir: string;
-              mcp: { list: () => readonly McpEventConnection[] };
-              runtime: typeof boundary.runtime;
-              hostContract: { version: '1'; required: readonly string[] };
-              observability?: EventIntelligenceObservabilitySink;
-            }) => Promise<EmbeddedRuntimeIntegration<ToolContext>>;
-          };
-        if (!candidate.createEventIntelligence) {
-          throw new Error('EI canonical facade missing from candidate package');
-        }
-        return candidate.createEventIntelligence({
-          dataDir,
-          mcp: { list: () => connections },
-          runtime: boundary.runtime,
-          hostContract: {
-            version: '1',
-            required: ['mcp.registry', 'storage.durable', 'wake.receipts', 'tooling.owner-scoped'],
-          },
-          ...(observability ? { observability } : {}),
-        });
-      })()
-    : await createEmbeddedRuntimeIntegration<ToolContext>({
-        dataDir,
-        eventSources: connections,
-        activation: boundary.activation,
-        tooling: boundary.tooling,
-        ...(observability ? { observability } : {}),
-      });
+  // Single canonical host path. This experimental consumer requires an EI
+  // candidate exposing HostContract v1; it must fail closed with old 0.11.0.
+  const packageModule = await import('mcp-event-intelligence/embedded') as
+    typeof import('mcp-event-intelligence/embedded') & {
+      createEventIntelligence?: (options: {
+        dataDir: string;
+        mcp: { list: () => readonly McpEventConnection[] };
+        runtime: typeof boundary.runtime;
+        hostContract: { version: '1'; required: readonly string[] };
+        observability?: EventIntelligenceObservabilitySink;
+      }) => Promise<EmbeddedRuntimeIntegration<ToolContext>>;
+    };
+  if (!packageModule.createEventIntelligence) {
+    throw new Error('EI v1 canonical facade required; 0.11.0 cannot run this adapter');
+  }
+  const embedded = await packageModule.createEventIntelligence({
+    dataDir,
+    mcp: { list: () => connections },
+    runtime: boundary.runtime,
+    hostContract: {
+      version: '1',
+      required: ['mcp.registry', 'storage.durable', 'wake.receipts', 'tooling.owner-scoped'],
+    },
+    ...(observability ? { observability } : {}),
+  });
   return Object.freeze({
     ...embedded,
     async close() {

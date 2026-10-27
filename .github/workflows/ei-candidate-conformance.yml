@@ -10,6 +10,7 @@ on:
       - "agent/fixtures/event-intelligence-process-worker.ts"
       - ".github/workflows/ei-candidate-conformance.yml"
       - "docs/evidence/ei-v1-fork-host-conformance.md"
+      - "docs/evidence/ei-canonical-adapter-size-experiment.md"
   workflow_dispatch:
 
 permissions:
@@ -36,7 +37,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: sarooo17/event-intelligence
-          ref: bd051604da315b5f0015a01df1767787dcd098b3
+          ref: 4aa23a74a397c98a6d5e7158491e210a20a9844e
           path: .ei-candidate-source
           persist-credentials: false
 

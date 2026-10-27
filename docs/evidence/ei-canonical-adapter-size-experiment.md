@@ -68,3 +68,20 @@ tool names, while the *production Muffin factory* must retain native
 on fork commit `fd552683368c677298d325d5db40a2e802dc318b`
 completed **8/8 test files and 11/11 tests**, including the real adapter
 factory. The candidate is still unpublished and the PR remains unmerged.
+
+## Single-path cutover experiment (candidate-only)
+
+This stacked branch entirely removes the legacy `createEmbeddedRuntimeIntegration()`
+startup path from `agent/event-intelligence.ts`. It invokes the canonical
+`createEventIntelligence()` for every call. Failure to find the candidate
+export is explicit, never a silent downgrade to EI 0.11.0. The pinned 0.11.0
+manifest/lockfile therefore **cannot run this branch without installing the
+candidate**. CI overlays only a tested, source-pinned candidate tarball.
+
+Physical LOC of this adapter: **415**; nonblank LOC:
+**383**. The exact baseline remains **398 / 365**.
+The line count includes all host-specific behavior, including the policy and
+turn/receipt mapper: nothing has been hidden in another local adapter file.
+This is an independent experiment branch, **not a deployable consumer upgrade**
+until a real candidate dependency pin and lockfile are available and the
+normal Muffin CI passes. Current #15/#16 review and DCO gates still apply.
