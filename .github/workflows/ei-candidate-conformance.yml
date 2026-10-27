@@ -42,14 +42,13 @@ jobs:
           node --input-type=module <<'EOF'
           import assert from 'node:assert/strict';
           import { readFileSync } from 'node:fs';
-          import { createRequire } from 'node:module';
+          import { fileURLToPath } from 'node:url';
+          import { dirname, join } from 'node:path';
           import { createEventIntelligence } from 'mcp-event-intelligence/embedded';
-          const require=createRequire(import.meta.url);
-          const declared=JSON.parse(readFileSync('package.json','utf8'));
+           const declared=JSON.parse(readFileSync('package.json','utf8'));
           const lock=JSON.parse(readFileSync('package-lock.json','utf8'));
-          const {dirname,join}=require('node:path');
-          // package.json is intentionally not a public package export.
-          const pkgEntry=require.resolve('mcp-event-intelligence/embedded');
+          // Resolve the actual ESM export, not an unsupported CJS require subpath.
+          const pkgEntry=fileURLToPath(import.meta.resolve('mcp-event-intelligence/embedded'));
           const installed=JSON.parse(readFileSync(
             join(dirname(pkgEntry),'../package.json'),'utf8'));
           const version='0.12.0-next.0';
@@ -60,6 +59,10 @@ jobs:
           assert.equal(typeof createEventIntelligence,'function');
           console.log('EI real npm prerelease '+version+' installed and canonical API available');
           EOF
+          # Real registry digest, used to upgrade the lock from the
+          # published tarball's SHA-1 shasum to canonical SHA-512 SRI.
+          npm view mcp-event-intelligence@0.12.0-next.0 dist.integrity \
+            --registry=https://registry.npmjs.org/
           git diff --exit-code -- package.json package-lock.json
 
       - name: Rebuild Muffin's native SQLite dependency (npm ci skipped prepare)
