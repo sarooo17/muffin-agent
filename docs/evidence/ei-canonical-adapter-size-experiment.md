@@ -13,7 +13,7 @@ dependency nor its lockfile is modified.
 - The earlier candidate conformance branch (PR #15) had **421 physical lines
   / 386 nonblank lines**. Its integration still used the old facade.
 - This PR exercises canonical `createEventIntelligence()` from exact
-  EI `729eb901c604bba0edfa35746cb90235c0db301c` inside the
+  EI `bd051604da315b5f0015a01df1767787dcd098b3` inside the
   **real `createMuffinEventIntelligence` adapter function** when
   `EI_CANDIDATE_CONFORMANCE=1`. Normal `0.11.0` uses the original
   `createEmbeddedRuntimeIntegration()` path.
@@ -40,3 +40,18 @@ This is **not** independent third-party authoring, production TurnStore
 recovery, real provider-network failover, an SLO pass, or a v1 release.
 Keep PR in draft until exact-head CI, an independent review, and owner DCO
 sign-off. Do not merge based solely on the previous #15 candidate result.
+
+## Defect reproduced in exact-source CI (2026-10-27)
+
+The first candidate job using EI main `729eb901c` completed 3/11 tests
+and failed eight tests because the canonical facade silently discarded the
+Muffin-owned tool name mapping. This is **not** a test-only renaming issue:
+Muffin's existing tool registry and caller-facing command names must remain
+stable, so silently publishing the uncorrected facade would be a breaking
+behavioral regression.
+
+Upstream candidate [EI PR #268](https://github.com/sarooo17/event-intelligence/pull/268)
+adds data-only `runtime.names` pass-through and pre-start validation.
+This experiment now pins its exact candidate commit, without claiming the
+upstream fix has been merged or published. Only the subsequent run can show
+whether the real adapter now conforms.
