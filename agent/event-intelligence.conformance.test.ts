@@ -136,7 +136,7 @@ describe('Muffin Event Intelligence host conformance', () => {
               TEMPORAL_TICK_MS: '100000', WAKE_RETRY_TICK_MS: '100000',
             },
             mcp: { list: () => [connection] },
-            runtime: boundary.runtime,
+            runtime: { ...boundary.runtime, names: undefined },
             observability,
             hostContract: {
               version: '1',

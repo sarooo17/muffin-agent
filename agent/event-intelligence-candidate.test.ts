@@ -103,6 +103,9 @@ describe.skipIf(process.env.EI_CANDIDATE_CONFORMANCE !== '1')(
           },
           runtime: {
             ...boundary.runtime,
+            // This direct fixture exercises canonical default names; the real
+            // Muffin attachment above retains the custom event_watch_* names.
+            names: undefined,
             // Host-owned approval/interrupt contract: EI must return this
             // result unchanged and must not persist a denied mutation.
             control: (request: Parameters<typeof boundary.runtime.control>[0]) => {

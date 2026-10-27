@@ -82,7 +82,7 @@ const host = await candidate.createEventIntelligence({
     TEMPORAL_TICK_MS: '100000', WAKE_RETRY_TICK_MS: '100000',
   },
   mcp: { list: () => [connection] },
-  runtime: boundary.runtime,
+  runtime: { ...boundary.runtime, names: undefined },
   hostContract: {
     version: '1',
     required: [
