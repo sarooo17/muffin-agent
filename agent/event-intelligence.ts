@@ -28,29 +28,21 @@ import type { McpEventConnection } from './tools/mcp.js';
 const EXTERNAL: 3 = 3;
 const CLEAN: 0 = 0;
 
-// Muffin policy declarations; no host authority is transferred to EI.
-const readPolicy = {
-  effect: 'context', risk: 'low', reversible: 'yes', rerunnable: true,
-  resourceKind: 'none', hostOnly: true,
-} as const;
-const mutationPolicy = {
-  effect: 'host', risk: 'medium', reversible: 'no', rerunnable: false,
-  resourceKind: 'none', hostOnly: true,
-} as const;
-
-export const eventSourcesCapability: CapabilityDecl = {
-  id: 'events.sources.read', ...readPolicy, policyArgs: [],
-};
-export const eventTriggerReadCapability: CapabilityDecl = {
-  id: 'events.trigger.read', ...readPolicy, policyArgs: ['trigger_id'],
-};
-// These unattended-work mutations still require the host's approval path.
-export const eventTriggerCapability: CapabilityDecl = {
-  id: 'events.trigger.create', ...mutationPolicy, policyArgs: ['instruction'],
-};
-export const eventTriggerManageCapability: CapabilityDecl = {
-  id: 'events.trigger.manage', ...mutationPolicy, policyArgs: ['trigger_id'],
-};
+// The capability classification stays with Muffin's policy engine.
+const hostCapability = (id: string, mutates: boolean, policyArgs: string[]): CapabilityDecl => ({
+  id,
+  effect: mutates ? 'host' : 'context',
+  risk: mutates ? 'medium' : 'low',
+  reversible: mutates ? 'no' : 'yes',
+  rerunnable: !mutates,
+  resourceKind: 'none',
+  policyArgs,
+  hostOnly: true,
+});
+export const eventSourcesCapability = hostCapability('events.sources.read', false, []);
+export const eventTriggerReadCapability = hostCapability('events.trigger.read', false, ['trigger_id']);
+export const eventTriggerCapability = hostCapability('events.trigger.create', true, ['instruction']);
+export const eventTriggerManageCapability = hostCapability('events.trigger.manage', true, ['trigger_id']);
 
 type RuntimePort = {
   deps: LoopDeps;
