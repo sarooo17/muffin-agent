@@ -59,10 +59,13 @@ jobs:
           assert.equal(typeof createEventIntelligence,'function');
           console.log('EI real npm prerelease '+version+' installed and canonical API available');
           EOF
-          # Real registry digest, used to upgrade the lock from the
-          # published tarball's SHA-1 shasum to canonical SHA-512 SRI.
-          npm view mcp-event-intelligence@0.12.0-next.0 dist.integrity \
-            --registry=https://registry.npmjs.org/
+          # The reviewed lock must pin the exact SHA-512 digest from
+          # the actual published npm tarball, not a source snapshot.
+          REGISTRY_SRI="$(npm view mcp-event-intelligence@0.12.0-next.0 dist.integrity \
+            --registry=https://registry.npmjs.org/)"
+          LOCK_SRI="$(node -p "require('./package-lock.json').packages['node_modules/mcp-event-intelligence'].integrity")"
+          test "$REGISTRY_SRI" = "$LOCK_SRI"
+          test "${LOCK_SRI#sha512-}" != "$LOCK_SRI"
           git diff --exit-code -- package.json package-lock.json
 
       - name: Rebuild Muffin's native SQLite dependency (npm ci skipped prepare)

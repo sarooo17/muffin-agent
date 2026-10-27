@@ -125,7 +125,7 @@ with the `next` dist-tag and signed provenance. This commit makes a
 **consumer-owned** upgrade: `package.json` and the complete `package-lock.json`
 pin `mcp-event-intelligence@0.12.0-next.0`; the lock imports all 14 newly
 required `pg` runtime transitive package entries from the reviewed EI lock
-and pins the exact published tarball by its shasum-derived SRI.
+and pins the exact published tarball by its official npm registry SHA-512 SRI.
 
 The conformance workflow now installs with the normal `npm ci --ignore-scripts`
 and asserts the actual npm package's version and `createEventIntelligence`
@@ -136,3 +136,7 @@ installation and latest-head Codex/DCO gates can justify merging.
 A source-pinned candidate test is *not* an independent external adoption
 proof; this is still owner-maintained. Keep parent stacked PRs #15 and #16
 separately gated until they are rebased/cleaned up.
+
+The registry-returned SHA-512 SRI is asserted by the CI conformance job
+against the committed lockfile, before typecheck and tests. This is stronger
+than the temporary shasum-derived SHA-1 in the first lock draft.
