@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import {
+  createEventIntelligence,
   type EventActivation,
-  type EmbeddedRuntimeIntegration,
   type PortableAgentTool,
 } from 'mcp-event-intelligence/embedded';
 import type { EventIntelligenceObservabilitySink } from 'mcp-event-intelligence/observability';
@@ -341,22 +341,9 @@ export async function createMuffinEventIntelligence(
 ) {
   const boundary = createMuffinEventIntelligenceHostCallbacks(wakePort);
   const dataDir = join(home, 'event-intelligence');
-  // Single canonical host path. This experimental consumer requires an EI
-  // candidate exposing HostContract v1; it must fail closed with old 0.11.0.
-  const packageModule = await import('mcp-event-intelligence/embedded') as
-    typeof import('mcp-event-intelligence/embedded') & {
-      createEventIntelligence?: (options: {
-        dataDir: string;
-        mcp: { list: () => readonly McpEventConnection[] };
-        runtime: typeof boundary.runtime;
-        hostContract: { version: '1'; required: readonly string[] };
-        observability?: EventIntelligenceObservabilitySink;
-      }) => Promise<EmbeddedRuntimeIntegration<ToolContext>>;
-    };
-  if (!packageModule.createEventIntelligence) {
-    throw new Error('EI v1 canonical facade required; 0.11.0 cannot run this adapter');
-  }
-  const embedded = await packageModule.createEventIntelligence({
+  // Canonical-only consumer: the pinned 0.11.0 cannot compile this
+  // experimental branch until a reviewed EI prerelease is installed.
+  const embedded = await createEventIntelligence<ToolContext>({
     dataDir,
     mcp: { list: () => connections },
     runtime: boundary.runtime,
