@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import {
-  createEmbeddedRuntimeIntegration,
+  createEventIntelligence,
   type EventActivation,
   type PortableAgentTool,
 } from 'mcp-event-intelligence/embedded';
@@ -28,53 +28,21 @@ import type { McpEventConnection } from './tools/mcp.js';
 const EXTERNAL: 3 = 3;
 const CLEAN: 0 = 0;
 
-export const eventSourcesCapability: CapabilityDecl = {
-  id: 'events.sources.read',
-  effect: 'context',
-  risk: 'low',
-  reversible: 'yes',
-  rerunnable: true,
+// The capability classification stays with Muffin's policy engine.
+const hostCapability = (id: string, mutates: boolean, policyArgs: string[]): CapabilityDecl => ({
+  id,
+  effect: mutates ? 'host' : 'context',
+  risk: mutates ? 'medium' : 'low',
+  reversible: mutates ? 'no' : 'yes',
+  rerunnable: !mutates,
   resourceKind: 'none',
-  policyArgs: [],
+  policyArgs,
   hostOnly: true,
-};
-
-export const eventTriggerReadCapability: CapabilityDecl = {
-  id: 'events.trigger.read',
-  effect: 'context',
-  risk: 'low',
-  reversible: 'yes',
-  rerunnable: true,
-  resourceKind: 'none',
-  policyArgs: ['trigger_id'],
-  hostOnly: true,
-};
-
-export const eventTriggerCapability: CapabilityDecl = {
-  id: 'events.trigger.create',
-  // Creating a durable trigger delegates future unattended work. Route it
-  // through the ordinary host-effect authority path so the owner can approve
-  // it under the active autonomy mode; system principals remain denied.
-  effect: 'host',
-  risk: 'medium',
-  reversible: 'no',
-  rerunnable: false,
-  resourceKind: 'none',
-  policyArgs: ['instruction'],
-  hostOnly: true,
-};
-
-export const eventTriggerManageCapability: CapabilityDecl = {
-  id: 'events.trigger.manage',
-  // This shared mutation tool includes deletion and edits to future work.
-  effect: 'host',
-  risk: 'medium',
-  reversible: 'no',
-  rerunnable: false,
-  resourceKind: 'none',
-  policyArgs: ['trigger_id'],
-  hostOnly: true,
-};
+});
+export const eventSourcesCapability = hostCapability('events.sources.read', false, []);
+export const eventTriggerReadCapability = hostCapability('events.trigger.read', false, ['trigger_id']);
+export const eventTriggerCapability = hostCapability('events.trigger.create', true, ['instruction']);
+export const eventTriggerManageCapability = hostCapability('events.trigger.manage', true, ['trigger_id']);
 
 type RuntimePort = {
   deps: LoopDeps;
@@ -91,7 +59,9 @@ export type EventWakePort = {
   source(turnId: string): EventWakeSource | null;
   has(workId: string): boolean;
   openSession(sessionId: string): SessionRef;
-  enqueue(input: TurnInput): string;
+  // Optional correlation metadata is supplied by EI but owned by the host.
+  // It prevents external Turn receipt IDs from being mistaken for EI wake IDs.
+  enqueue(input: TurnInput, wake?: { triggerId: string; wakeId: string }): string;
 };
 
 function renderWakeText(activation: EventActivation): string {
@@ -152,21 +122,18 @@ class WakeOwnerBindings {
   }
 }
 
-function activationEvent(activation: EventActivation, receiptId: string): RuntimeEvent {
-  const envelope = activation as EventActivation & {
-    wakeId?: unknown;
-    triggerId?: unknown;
-    matchId?: unknown;
-  };
+export function activationEvent(activation: EventActivation, receiptId: string): RuntimeEvent {
+  // These identities come from EI's canonical nested activation envelope,
+  // never from event-supplied top-level properties or untrusted payload data.
   return {
     occurrenceId: receiptId,
     kind: 'external.condition.matched',
     source: 'event-intelligence',
     observedAt: new Date().toISOString(),
     evidence: {
-      ...(typeof envelope.wakeId === 'string' ? { wakeId: envelope.wakeId } : {}),
-      ...(typeof envelope.triggerId === 'string' ? { triggerId: envelope.triggerId } : {}),
-      ...(typeof envelope.matchId === 'string' ? { matchId: envelope.matchId } : {}),
+      wakeId: activation.wake.wakeId,
+      triggerId: activation.trigger.triggerId,
+      matchId: activation.match.matchId,
     },
   };
 }
@@ -201,6 +168,9 @@ function activationDelivery(port: EventWakePort, wakeOwners: WakeOwnerBindings) 
             contentTaint: EXTERNAL,
             inputOrigin: 'external',
             ...(target.replyTo === null ? {} : { replyTo: target.replyTo }),
+          }, {
+            triggerId: activation.trigger.triggerId,
+            wakeId: activation.wake.wakeId,
           });
           // Preserve only explanatory read scope for the wake. Mutations below
           // still require the real owner principal.
@@ -296,12 +266,13 @@ function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool
       const result = await tool.execute(args, ctx);
       if (!result.ok) {
         const detail = result.error?.message ?? 'Event Intelligence tool failed';
-        if (result.error?.code === 'EVENT_WATCH_OWNER_REQUIRED') {
-          return { content: detail, isError: true, tier: CLEAN };
+        if (sources && result.error?.code !== 'EVENT_WATCH_OWNER_REQUIRED') {
+          return {
+            content: fence('event_sources', detail, 'Event Intelligence source discovery error').block,
+            isError: true, tier: EXTERNAL,
+          };
         }
-        if (!sources) return { content: detail, isError: true, tier: CLEAN };
-        const wrapped = fence('event_sources', detail, 'Event Intelligence source discovery error');
-        return { content: wrapped.block, isError: true, tier: EXTERNAL };
+        return { content: detail, isError: true, tier: CLEAN };
       }
 
       if (sources) {
@@ -335,24 +306,46 @@ function adaptPortableTool(tool: PortableAgentTool<ToolContext>): RegisteredTool
   };
 }
 
+/**
+ * Host-owned wake/owner/control boundary reused by the conformance fixture.
+ * Muffin retains Turn receipts, policy and tool exposure.
+ */
+export function createMuffinEventIntelligenceHostCallbacks(wakePort: EventWakePort) {
+  const wakeOwners = new WakeOwnerBindings();
+  const activation = activationDelivery(wakePort, wakeOwners);
+  const tooling = portableTooling(wakeOwners);
+  return {
+    activation,
+    tooling,
+    runtime: { ...activation, ...tooling },
+    clear: () => wakeOwners.clear(),
+  };
+}
+
 export async function createMuffinEventIntelligence(
   connections: readonly McpEventConnection[],
   home: string,
   wakePort: EventWakePort,
   observability?: EventIntelligenceObservabilitySink,
 ) {
-  const wakeOwners = new WakeOwnerBindings();
-  const embedded = await createEmbeddedRuntimeIntegration<ToolContext>({
-    dataDir: join(home, 'event-intelligence'),
-    eventSources: connections,
-    activation: activationDelivery(wakePort, wakeOwners),
+  const boundary = createMuffinEventIntelligenceHostCallbacks(wakePort);
+  const dataDir = join(home, 'event-intelligence');
+  // Canonical-only consumer: the pinned 0.11.0 cannot compile this
+  // experimental branch until a reviewed EI prerelease is installed.
+  const embedded = await createEventIntelligence<ToolContext, EventWakeSource>({
+    dataDir,
+    mcp: { list: () => connections },
+    runtime: boundary.runtime,
+    hostContract: {
+      version: '1',
+      required: ['mcp.registry', 'storage.durable', 'wake.receipts', 'tooling.owner-scoped'],
+    },
     ...(observability ? { observability } : {}),
-    tooling: portableTooling(wakeOwners),
   });
   return Object.freeze({
     ...embedded,
     async close() {
-      wakeOwners.clear();
+      boundary.clear();
       await embedded.close();
     },
   });

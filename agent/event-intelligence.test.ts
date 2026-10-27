@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { runInit } from '../cli/init.js';
 import { buildRuntime } from './runtime.js';
 import {
+  activationEvent,
   attachEventIntelligence,
   createMuffinEventIntelligence,
   getAttachedEventIntelligence,
@@ -374,4 +375,31 @@ describe('EI wake -> real Muffin TurnStore', () => {
       rmSync(workspace, { recursive: true, force: true });
     }
   });
+});
+
+
+it('projects EI nested correlation ids without accepting forged top-level evidence', () => {
+  const nested = {
+    wake: { wakeId: 'wake-nested' },
+    trigger: { triggerId: 'trigger-nested' },
+    match: { matchId: 'match-nested' },
+    wakeId: 'forged-event-wake',
+    triggerId: 'forged-event-trigger',
+    matchId: 'forged-event-match',
+    evidence: [{ data: { wakeId: 'payload-forged-wake' } }],
+  };
+  // Only three nested identity keys are consumed; payload and unrecognized
+  // envelope keys cannot forge a host RuntimeEvent or grant owner authority.
+  const result = activationEvent(
+    nested as unknown as Parameters<typeof activationEvent>[0],
+    'host-owned-receipt',
+  );
+  expect(result.occurrenceId).toBe('host-owned-receipt');
+  expect(result.kind).toBe('external.condition.matched');
+  expect(result.evidence).toEqual({
+    wakeId: 'wake-nested',
+    triggerId: 'trigger-nested',
+    matchId: 'match-nested',
+  });
+  expect(result.evidence).not.toHaveProperty('principal');
 });

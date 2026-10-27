@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runHostConformance } from 'mcp-event-intelligence/conformance';
 import type { EventIntelligenceObservabilityEvent } from 'mcp-event-intelligence/observability';
 import { describe, expect, it } from 'vitest';
-import { createMuffinEventIntelligence, type EventWakePort } from './event-intelligence.js';
+import { createMuffinEventIntelligence, createMuffinEventIntelligenceHostCallbacks, type EventWakePort } from './event-intelligence.js';
 import { toolContext } from './fixtures/tool-context.js';
 import type { TurnInput } from './loop.js';
 
@@ -14,7 +14,7 @@ function requiredTurnId(input: TurnInput): string {
 }
 
 describe('Muffin Event Intelligence host conformance', () => {
-  it('passes the public EI v0.11 management host contract through Muffin tools', async () => {
+  it('passes the public EI management host contract through Muffin tools', async () => {
     const adapter = {
       name: 'muffin-agent',
 
@@ -90,8 +90,11 @@ describe('Muffin Event Intelligence host conformance', () => {
             id: sessionId,
             file: join(home, `${sessionId.replaceAll(':', '_')}.jsonl`),
           }),
-          enqueue: (input) => {
+          enqueue: (input, wake) => {
             const runtimeReceiptId = requiredTurnId(input);
+            if (!wake?.wakeId || !wake.triggerId) {
+              throw new Error('conformance wake missing EI identity');
+            }
             persistedReceipts.add(runtimeReceiptId);
             const replyTo = input.replyTo;
             if (
@@ -102,9 +105,12 @@ describe('Muffin Event Intelligence host conformance', () => {
             ) {
               throw new Error('conformance delivery lost its Muffin source turn');
             }
+            if (wake.triggerId !== replyTo.conformanceTriggerId) {
+              throw new Error('Muffin source/trigger correlation changed');
+            }
             deliveries.push({
-              triggerId: replyTo.conformanceTriggerId,
-              wakeId: runtimeReceiptId,
+              triggerId: wake.triggerId,
+              wakeId: wake.wakeId,
               runtimeReceiptId,
             });
             return runtimeReceiptId;
@@ -112,7 +118,37 @@ describe('Muffin Event Intelligence host conformance', () => {
         };
 
         const start = async () => {
-          embedded = await createMuffinEventIntelligence([connection], home, port, observability);
+          if (process.env.EI_CANDIDATE_CONFORMANCE !== '1') {
+            embedded = await createMuffinEventIntelligence([connection], home, port, observability);
+            return;
+          }
+          // Under the v1 candidate, run the ENTIRE public v3 management
+          // conformance against the canonical facade and actual Muffin ports.
+          // Stock Muffin CI still uses its pinned 0.11.0 embedded integration.
+          const candidate = await import('mcp-event-intelligence/embedded') as unknown as {
+            createEventIntelligence: (options: Record<string, unknown>) => Promise<any>;
+          };
+          const boundary = createMuffinEventIntelligenceHostCallbacks(port);
+          const host = await candidate.createEventIntelligence({
+            dataDir: join(home, 'event-intelligence'),
+            env: {
+              TYPESAFE_API_KEY: '', RUNTIME_WAKE_TARGETS_JSON: '{}',
+              TEMPORAL_TICK_MS: '100000', WAKE_RETRY_TICK_MS: '100000',
+            },
+            mcp: { list: () => [connection] },
+            runtime: { ...boundary.runtime, names: undefined },
+            observability,
+            hostContract: {
+              version: '1',
+              required: [
+                'mcp.registry', 'storage.durable',
+                'wake.receipts', 'tooling.owner-scoped',
+              ],
+            },
+          });
+          expect(host.hostContract.schema).toBe('event-intelligence.host-contract.v1');
+          expect(host.hostContract.readiness).toBe('configuration-validated');
+          embedded = host as Awaited<ReturnType<typeof createMuffinEventIntelligence>>;
         };
 
         await start();
@@ -124,7 +160,12 @@ describe('Muffin Event Intelligence host conformance', () => {
         ) => {
           const current = embedded;
           if (!current) throw new Error('Event Intelligence conformance host is closed');
-          const tool = current.toolCatalog.get(name);
+          const actualName = process.env.EI_CANDIDATE_CONFORMANCE === '1'
+            ? name === 'event_watch_sources'
+              ? 'event_sources_list'
+              : name.replace(/^event_watch_/, 'trigger_')
+            : name;
+          const tool = current.toolCatalog.get(actualName);
           if (!tool) throw new Error(`${name} unavailable`);
           const result = await tool.execute(
             args,
@@ -216,6 +257,19 @@ describe('Muffin Event Intelligence host conformance', () => {
             return [...deliveries];
           },
 
+          async readWakeReceipt(wakeId: string) {
+            if (!embedded) throw new Error('EI host not started');
+            // Read authoritative durable EI state, including after reopen;
+            // the in-memory Muffin delivery observer is not evidence.
+            const persisted = await embedded.host.store.getWakeDelivery(wakeId);
+            return persisted
+              ? {
+                  status: persisted.status,
+                  runtimeReceiptId: persisted.runtimeReceiptId,
+                }
+              : null;
+          },
+
           async restart() {
             await embedded?.close();
             embedded = null;
@@ -294,10 +348,29 @@ describe('Muffin Event Intelligence host conformance', () => {
     };
 
     const report = await runHostConformance(adapter, { profile: 'management' });
+    if (process.env.EI_CANDIDATE_CONFORMANCE === '1') {
+      writeFileSync('ei-host-conformance-report.json', JSON.stringify({
+        ...report,
+        host: 'muffin-agent',
+        testMode: 'EI candidate tarball, fork-only',
+        integration: 'canonical createEventIntelligence() + HostContract v1',
+        independentAdapterAuthorVerified: false,
+        notes: [
+          'Host runtime authored by Muffin; adapter validation authored by EI maintainer',
+          'Local durable store restart, not actual OS-process SIGKILL',
+          'Synthetic MCP Events connection, not live network or provider',
+        ],
+      }, null, 2) + '\n');
+    }
     expect(report.passed, JSON.stringify(report, null, 2)).toBe(true);
     expect(report.adapter).toBe('muffin-agent');
     expect(report.profile).toBe('management');
     expect(report.summary.failed).toBe(0);
+    if (process.env.EI_CANDIDATE_CONFORMANCE === '1') {
+      expect(report.schema).toBe('event-intelligence.host-conformance.v3');
+      expect(report.summary.total).toBe(7);
+      expect(report.summary.passed).toBe(7);
+    }
     expect(report.observability.eventNames).toContain('ei.trigger.created');
     expect(report.observability.eventNames).toContain('ei.match.matched');
     expect(report.observability.eventNames).toContain('ei.wake.delivered');
