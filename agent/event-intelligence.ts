@@ -333,7 +333,7 @@ export async function createMuffinEventIntelligence(
   const dataDir = join(home, 'event-intelligence');
   // Canonical-only consumer: the pinned 0.11.0 cannot compile this
   // experimental branch until a reviewed EI prerelease is installed.
-  const embedded = await createEventIntelligence<ToolContext>({
+  const embedded = await createEventIntelligence<ToolContext, EventWakeSource>({
     dataDir,
     mcp: { list: () => connections },
     runtime: boundary.runtime,
