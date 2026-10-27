@@ -101,3 +101,18 @@ That release is not authorized by the tests alone; do not merge this branch.
 Review: EI #268 must be independently reviewed on its latest source HEAD;
 Muffin #15's owner-side DCO, #16, and this PR require independent review.
 No npm publish, upstream Muffin change, or production deployment is claimed.
+
+## Current reviewed-source regression pass (2026-10-27)
+
+Run candidate CI against the **exact current Event Intelligence main commit**
+`96d2f1ac04a9a4196fffdbae0ad2df410a3cc447`, including HostContract strict wake receipt acknowledgment and
+external-host PostgreSQL receipt conformance improvements from #275/#276.
+Only the CI-built tarball is installed; the Muffin manifest and lockfile
+remain pinned to published `0.11.0` until the separately reviewed, manual
+`next` prerelease and subsequent consumer-owned pin/lockfile PR exist.
+
+The single-path adapter remains 392 physical / 361 nonblank lines. This
+source-refresh commit changes only the experimental workflow pin and
+evidence record. It is NOT production upgrade, evidence of reduction, or DCO
+attestation. Require all 8 focused test files, 11 tests, fresh HEAD review
+and actual GitHub Actions success.

@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: sarooo17/event-intelligence
-          ref: 4aa23a74a397c98a6d5e7158491e210a20a9844e
+          ref: 96d2f1ac04a9a4196fffdbae0ad2df410a3cc447
           path: .ei-candidate-source
           persist-credentials: false
 
@@ -92,7 +92,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ei-0.12.0-next.0-source-4aa23a7
+          name: ei-0.12.0-next.0-source-96d2f1a
           path: ${{ runner.temp }}/mcp-event-intelligence-0.12.0-next.0.tgz
           if-no-files-found: error
 
