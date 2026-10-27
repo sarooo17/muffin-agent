@@ -45,12 +45,21 @@ jobs:
         working-directory: .ei-candidate-source
         run: |
           npm ci --ignore-scripts
+          # CI-only versioned snapshot, NOT an npm publication or Git tag.
+          npm version 0.12.0-next.0 --no-git-tag-version --ignore-scripts
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const manifest = JSON.parse(readFileSync("server.json", "utf8"));
+            manifest.version = "0.12.0-next.0";
+            manifest.packages = manifest.packages.map(p => ({...p, version: "0.12.0-next.0"}));
+            writeFileSync("server.json", JSON.stringify(manifest, null, 2) + "\\n");
+          '
           npm pack --pack-destination "${RUNNER_TEMP}"
 
       - name: Override only this CI job's installed EI (do not edit lockfile)
         run: |
           npm install --no-save --package-lock=false --ignore-scripts \
-            "${RUNNER_TEMP}/mcp-event-intelligence-0.11.0.tgz"
+            "${RUNNER_TEMP}/mcp-event-intelligence-0.12.0-next.0.tgz"
           node --input-type=module -e '
             import { createEventIntelligence } from "mcp-event-intelligence/embedded";
             if (typeof createEventIntelligence !== "function") {
@@ -78,6 +87,14 @@ jobs:
             agent/event-intelligence-discovery.test.ts \
             agent/event-intelligence-recovery.test.ts \
             agent/event-intelligence-restart.test.ts
+
+      - name: Upload source-pinned EI prerelease candidate bundle (not npm)
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ei-0.12.0-next.0-source-4aa23a7
+          path: ${{ runner.temp }}/mcp-event-intelligence-0.12.0-next.0.tgz
+          if-no-files-found: error
 
       - name: Retain exact-host conformance evidence
         if: always()
