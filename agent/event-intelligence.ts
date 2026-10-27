@@ -122,20 +122,19 @@ class WakeOwnerBindings {
   }
 }
 
-function activationEvent(activation: EventActivation, receiptId: string): RuntimeEvent {
-  const envelope = activation as EventActivation &
-    Partial<Record<'wakeId' | 'triggerId' | 'matchId', unknown>>;
-  const evidence: Record<string, string> = {};
-  for (const key of ['wakeId', 'triggerId', 'matchId'] as const) {
-    const value = envelope[key];
-    if (typeof value === 'string') evidence[key] = value;
-  }
+export function activationEvent(activation: EventActivation, receiptId: string): RuntimeEvent {
+  // These identities come from EI's canonical nested activation envelope,
+  // never from event-supplied top-level properties or untrusted payload data.
   return {
     occurrenceId: receiptId,
     kind: 'external.condition.matched',
     source: 'event-intelligence',
     observedAt: new Date().toISOString(),
-    evidence,
+    evidence: {
+      wakeId: activation.wake.wakeId,
+      triggerId: activation.trigger.triggerId,
+      matchId: activation.match.matchId,
+    },
   };
 }
 
