@@ -40,6 +40,11 @@ export function reserveOnce({runId,dir}){
     })+'\n');
     fsyncSync(fd);
   }finally{closeSync(fd);}
+  // fsync the directory itself: otherwise a crash can lose the newly
+  // created intent name despite the file contents being synchronized.
+  // Fail closed on unsupported fsync before any potentially billable call.
+  const dirFd=openSync(dir,'r');
+  try{fsyncSync(dirFd);}finally{closeSync(dirFd);}
 }
 
 function usageOf(response){
@@ -88,6 +93,8 @@ export async function runMuffinOpenAILab(env=process.env,{
           tenant:input.tenant,kind:'muffin-host-wake'})+'\n');
         fsyncSync(fd);
       }finally{closeSync(fd);}
+      const dirFd=openSync(dir,'r');
+      try{fsyncSync(dirFd);}finally{closeSync(dirFd);}
       receipts.add(id);queued.push({id,taint:input.contentTaint,
         principalKind:input.principal?.kind});
       return id;
@@ -124,7 +131,7 @@ export async function runMuffinOpenAILab(env=process.env,{
     if(++modelRequests>MAX_MODEL_CALLS)
       throw error('EI_MUFFIN_MODEL_BUDGET_EXCEEDED');
     return client.chat.completions.create({
-      model:MODEL,store:false,parallel_tool_calls:false,
+      model:MODEL,store:false,
       ...input,
     });
   };
@@ -137,6 +144,7 @@ export async function runMuffinOpenAILab(env=process.env,{
         {role:'user',content:'Arm the demo event watch using the provided function.'},
       ],
       max_completion_tokens:96,
+      parallel_tool_calls:false,
       tools:[{type:'function',function:{
         name:'event_watch_create',description:'Arm a synthetic event watch',
         parameters:{type:'object',additionalProperties:false,
