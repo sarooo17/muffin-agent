@@ -337,8 +337,9 @@ export async function createMuffinEventIntelligence(
 type AttachedEventIntelligence = Awaited<ReturnType<typeof createMuffinEventIntelligence>>;
 const attachedEventIntelligence = new WeakMap<object, AttachedEventIntelligence>();
 
-export const getAttachedEventIntelligence = (runtime: object): AttachedEventIntelligence | null =>
-  attachedEventIntelligence.get(runtime) ?? null;
+export function getAttachedEventIntelligence(runtime: object): AttachedEventIntelligence | null {
+  return attachedEventIntelligence.get(runtime) ?? null;
+}
 
 function runtimeWakePort(runtime: RuntimePort): EventWakePort {
   return {
