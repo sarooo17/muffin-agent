@@ -9,7 +9,7 @@ const MAX_MODEL_CALLS=2;
 const MODEL='gpt-4o-mini';
 const safeId=x=>typeof x==='string'&&/^[a-zA-Z0-9_-]{8,96}$/.test(x);
 const error=code=>Object.assign(new Error(code),{code});
-const config=env=>{
+export const validateMuffinLiveConfig=env=>{
   if(env.EI_CONFIRM_MUFFIN_OPENAI_LIVE!=='YES' ||
      env.EI_MUFFIN_RUN_VOLUME_CONFIRMED!=='YES')
     throw error('EI_MUFFIN_LIVE_DISABLED');
@@ -25,7 +25,7 @@ const config=env=>{
   return {runId:env.EI_MUFFIN_RUN_ID,dir:env.EI_MUFFIN_RUN_STATE_DIR};
 };
 
-function reserveOnce({runId,dir}){
+export function reserveOnce({runId,dir}){
   const receipt=join(dir,'intent-'+runId+'.reserved.json');
   // The operator must mount a durable *private* Railway volume on this
   // path. A reservation survives process crash: never auto-retry after
@@ -51,7 +51,7 @@ function usageOf(response){
 }
 
 async function run(env=process.env){
-  const {runId,dir}=config(env);
+  const {runId,dir}=validateMuffinLiveConfig(env);
   // Require actual compiled Muffin and npm package BEFORE reserving any paid
   // intent or making provider requests.
   const [{default:OpenAI},{createMuffinEventIntelligence}]=await Promise.all([
