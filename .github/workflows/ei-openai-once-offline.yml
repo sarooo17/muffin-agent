@@ -25,7 +25,11 @@ jobs:
         run: |
           node --check evals/e2e/ei-openai-live.mjs
           node --check evals/e2e/ei-openai-live.test.mjs
-      - name: Test fail-closed one-shot ledger without API credentials
+      - name: Install and build the actual Muffin EI host with no provider credentials
+        run: |
+          npm ci --include=dev --no-audit --no-fund
+          npm run build
+      - name: Test fail-closed ledger and real Muffin EI tool/wake path against offline provider
         run: npm run test:e2e:ei:openai
       - name: Assert no live billed test credentials in workflow
         run: |
