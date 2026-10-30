@@ -709,6 +709,12 @@ USAGE
   # and (when present) the already private, service-owned key file.
   chmod 0711 "$ROOT_STAGE" || root_fail "could not expose the secured stage to the service account."
   say "root has prepared the service account; build and setup now run as muffin."
+  # A root-launched bootstrap may start in /root or a private CI checkout
+  # inaccessible to the locked service account. runuser retains the caller's
+  # cwd: Git then fails before it can clone a perfectly readable remote.
+  # Switch to the already validated 0700, muffin-owned home BEFORE dropping
+  # privileges. Do not loosen permissions on the caller's working tree.
+  cd "$SERVICE_HOME" || root_fail "could not enter the prepared service home before dropping privileges."
   set +e
   if [ -n "$KEY_COPY" ]; then
     runuser -u muffin -- env -i HOME="$SERVICE_HOME" USER=muffin LOGNAME=muffin SHELL=/bin/sh \
