@@ -139,14 +139,8 @@ function activationDelivery(port: EventWakePort, wakeOwners: WakeOwnerBindings) 
     hasReceipt: (workId: string) => port.has(workId),
     resolveTarget: (target: EventActivation['target']) =>
       target.runtime === 'muffin' && target.kind === 'task' ? port.source(target.id) : null,
-    deliver: async ({
-      activation,
-      target,
-      receiptId,
-    }: {
-      activation: EventActivation;
-      target: EventWakeSource;
-      receiptId: string;
+    deliver: async ({ activation, target, receiptId }: {
+      activation: EventActivation; target: EventWakeSource; receiptId: string;
     }) =>
       dispatchRuntimeEvent(activationEvent(activation, receiptId), [], {
         mode: 'agent',
@@ -196,36 +190,34 @@ function portableTooling(wakeOwners: WakeOwnerBindings) {
           : undefined);
       return {
         target: { runtime: 'muffin', kind: 'task', id: ctx.turnId },
-        ...(ctx.principal.kind === 'owner'
-          ? {
-              actor: {
-                type: 'agent',
-                principal_id: 'muffin:event-intelligence',
-                tenant_id: ctx.tenant,
-              },
-            }
-          : {}),
+        ...(ctx.principal.kind === 'owner' ? {
+          actor: {
+            type: 'agent',
+            principal_id: 'muffin:event-intelligence',
+            tenant_id: ctx.tenant,
+          },
+        } : {}),
         ...(owner ? { owner } : {}),
       };
     },
-    control: ({ runtimeContext, action }: { runtimeContext: ToolContext; action: string }) =>
-      runtimeContext.principal.kind === 'owner'
-        ? {
-            action: 'execute' as const,
-            execution: {
-              receiptId: `muffin-policy:${runtimeContext.turnId}:${action}`,
-            },
-          }
-        : {
-            action: 'return' as const,
-            result: {
-              ok: false,
-              error: {
-                code: 'EVENT_WATCH_OWNER_REQUIRED',
-                message: 'event watches can only be changed by the owner',
-              },
-            },
+    control: ({ runtimeContext, action }: { runtimeContext: ToolContext; action: string }) => {
+      if (runtimeContext.principal.kind === 'owner') {
+        return {
+          action: 'execute' as const,
+          execution: { receiptId: `muffin-policy:${runtimeContext.turnId}:${action}` },
+        };
+      }
+      return {
+        action: 'return' as const,
+        result: {
+          ok: false,
+          error: {
+            code: 'EVENT_WATCH_OWNER_REQUIRED',
+            message: 'event watches can only be changed by the owner',
           },
+        },
+      };
+    },
   };
 }
 
@@ -375,7 +367,5 @@ export async function attachEventIntelligence(
   });
 
   const diagnostics = await embedded.diagnostics();
-  return [
-    `event-intelligence — active, ${diagnostics.connections} shared MCP connections, ${diagnostics.eventsCapable} Events-capable`,
-  ];
+  return [`event-intelligence — active, ${diagnostics.connections} shared MCP connections, ${diagnostics.eventsCapable} Events-capable`];
 }
