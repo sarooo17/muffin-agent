@@ -1,0 +1,36 @@
+name: EI OpenAI Muffin One-Shot Safety (offline)
+on:
+  pull_request:
+    paths:
+      - 'evals/e2e/ei-openai-live.mjs'
+      - 'evals/e2e/ei-openai-live.test.mjs'
+      - 'docs/evidence/ei-muffin-openai-railway-lab.md'
+      - '.github/workflows/ei-openai-once-offline.yml'
+      - 'package.json'
+permissions:
+  contents: read
+jobs:
+  offline-muffin-openai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EI_CONFIRM_MUFFIN_OPENAI_LIVE: 'NO'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Offline validation runner syntax
+        run: |
+          node --check evals/e2e/ei-openai-live.mjs
+          node --check evals/e2e/ei-openai-live.test.mjs
+      - name: Install and build the actual Muffin EI host with no provider credentials
+        run: |
+          npm ci --include=dev --no-audit --no-fund
+          npm run build
+      - name: Test fail-closed ledger and real Muffin EI tool/wake path against offline provider
+        run: npm run test:e2e:ei:openai
+      - name: Assert no live billed test credentials in workflow
+        run: |
+          node --input-type=module -e "if(process.env.OPENAI_API_KEY) process.exit(1); console.log('offline-only; provider billing and Muffin live run NOT tested')"
