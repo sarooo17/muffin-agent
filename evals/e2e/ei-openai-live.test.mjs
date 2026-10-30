@@ -79,6 +79,7 @@ test('real compiled Muffin native EI tool + synthetic MCP poll + durable host re
       if(calls===1){
         assert.equal(request.max_completion_tokens,96);
         assert.equal(request.tool_choice.function.name,'event_watch_create');
+        assert.equal(request.parallel_tool_calls,false);
         return {choices:[{message:{tool_calls:[{
           type:'function',
           function:{name:'event_watch_create',
@@ -89,6 +90,7 @@ test('real compiled Muffin native EI tool + synthetic MCP poll + durable host re
       if(calls===2){
         assert.equal(request.max_completion_tokens,64);
         assert.equal(request.tools,undefined);
+        assert.equal(request.parallel_tool_calls,undefined);
         return {choices:[{message:{content:'Synthetic wake queued.'}}],
           usage:{prompt_tokens:30,completion_tokens:4,total_tokens:34}};
       }
