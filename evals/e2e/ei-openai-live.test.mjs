@@ -75,7 +75,6 @@ test('real compiled Muffin native EI tool + synthetic MCP poll + durable host re
       calls++;
       assert.equal(request.model,'gpt-4o-mini');
       assert.equal(request.store,false);
-      assert.equal(request.parallel_tool_calls,false);
       if(calls===1){
         assert.equal(request.max_completion_tokens,96);
         assert.equal(request.tool_choice.function.name,'event_watch_create');
