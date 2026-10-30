@@ -50,12 +50,17 @@ function usageOf(response){
     totalTokens:Number.isSafeInteger(u.total_tokens)?u.total_tokens:null};
 }
 
-async function run(env=process.env){
+export async function runMuffinOpenAILab(env=process.env,{
+  OpenAIClient,
+  createHost,
+}={}){
   const {runId,dir}=validateMuffinLiveConfig(env);
-  // Require actual compiled Muffin and npm package BEFORE reserving any paid
-  // intent or making provider requests.
+  // In offline tests only, inject a deterministic no-network fake provider.
+  // Production CLI does not accept injection or flags to change this route.
   const [{default:OpenAI},{createMuffinEventIntelligence}]=await Promise.all([
-    import('openai'),import('../../dist/agent/event-intelligence.js'),
+    OpenAIClient?Promise.resolve({default:OpenAIClient}):import('openai'),
+    createHost?Promise.resolve({createMuffinEventIntelligence:createHost}):
+      import('../../dist/agent/event-intelligence.js'),
   ]);
   reserveOnce({runId,dir});
   const home=join(dir,'muffin-'+runId);
@@ -181,7 +186,8 @@ async function run(env=process.env){
     // No message content, tool arguments, API credentials or raw response IDs.
     const result={contract:'ei.muffin-openai-host-e2e.v1',
       runId,syntheticMcpSource:true,realMuffinAdapter:true,
-      liveOpenAIProvider:true,model:MODEL,modelRequests,
+      liveOpenAIProvider:!OpenAIClient,simulatedProvider:Boolean(OpenAIClient),
+      model:MODEL,modelRequests,
       toolCallsAuthorized:1,hostReceiptsPersisted:receipts.size,
       systemWakeTaintVerified:true,
       firstUsage:usageOf(first),secondUsage:usageOf(second),
@@ -193,7 +199,7 @@ async function run(env=process.env){
   }finally{await host.close();}
 }
 if(process.argv[1]&&import.meta.url===new URL('file://'+process.argv[1]).href)
-  run().catch(e=>{
+  runMuffinOpenAILab().catch(e=>{
     // The OpenAI SDK can put request and credentials in error details;
     // never log message/stack. Failed ambiguous requests remain reserved.
     const known=new Set([
