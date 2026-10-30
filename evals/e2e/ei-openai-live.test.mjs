@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import test from 'node:test';
-import {reserveOnce,validateMuffinLiveConfig} from './ei-openai-live.mjs';
+import {reserveOnce,validateMuffinLiveConfig,runMuffinOpenAILab} from './ei-openai-live.mjs';
 
 function controlled(dir){
   return {
@@ -61,4 +61,56 @@ test('CLI without explicit opt-in cannot invoke a provider or print credentials'
   assert.equal(run.stdout,'');
   assert(!run.stderr.includes('TOP_SECRET_MUST_NEVER_LOG'));
   assert.equal(JSON.parse(run.stderr).code,'EI_MUFFIN_LIVE_DISABLED');
+});
+
+test('real compiled Muffin native EI tool + synthetic MCP poll + durable host receipt with NO paid provider call',async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'ei-muffin-host-'));
+  let calls=0;
+  class OfflineOpenAI{
+    constructor(options){
+      assert.equal(options.maxRetries,0);
+      assert.equal(options.timeout,15000);
+    }
+    chat={completions:{create:async request=>{
+      calls++;
+      assert.equal(request.model,'gpt-4o-mini');
+      assert.equal(request.store,false);
+      assert.equal(request.parallel_tool_calls,false);
+      if(calls===1){
+        assert.equal(request.max_completion_tokens,96);
+        assert.equal(request.tool_choice.function.name,'event_watch_create');
+        return {choices:[{message:{tool_calls:[{
+          type:'function',
+          function:{name:'event_watch_create',
+            arguments:JSON.stringify({trigger_id:'ei-openai-lab',
+              instruction:'Acknowledge demo.ready'})},
+        }]}}],usage:{prompt_tokens:22,completion_tokens:14,total_tokens:36}};
+      }
+      if(calls===2){
+        assert.equal(request.max_completion_tokens,64);
+        assert.equal(request.tools,undefined);
+        return {choices:[{message:{content:'Synthetic wake queued.'}}],
+          usage:{prompt_tokens:30,completion_tokens:4,total_tokens:34}};
+      }
+      throw new Error('offline model request cap violated');
+    }}};
+  }
+  try{
+    const outcome=await runMuffinOpenAILab(controlled(dir),{OpenAIClient:OfflineOpenAI});
+    assert.equal(calls,2);
+    assert.equal(outcome.modelRequests,2);
+    assert.equal(outcome.liveOpenAIProvider,false);
+    assert.equal(outcome.simulatedProvider,true);
+    assert.equal(outcome.realMuffinAdapter,true);
+    assert.equal(outcome.hostReceiptsPersisted,1);
+    assert.equal(outcome.systemWakeTaintVerified,true);
+    assert.equal(outcome.firstUsage.totalTokens,36);
+    assert.equal(outcome.secondUsage.totalTokens,34);
+    assert.equal(outcome.independentMcpProvider,false);
+    assert.equal(outcome.providerInvoiceCertified,false);
+    assert(existsSync(join(dir,'wake-'+controlled(dir).EI_MUFFIN_RUN_ID+'.json')));
+    await assert.rejects(()=>runMuffinOpenAILab(controlled(dir),{OpenAIClient:OfflineOpenAI}),
+      e=>e?.code==='EEXIST');
+    assert.equal(calls,2,'durable preflight must prevent a third provider call on restart');
+  }finally{rmSync(dir,{recursive:true,force:true});}
 });
