@@ -196,6 +196,7 @@ export async function runMuffinOpenAILab(env=process.env,{
       completeProviderEventTimeFrontierVerified:false,
       releaseSloCertified:false};
     process.stdout.write(JSON.stringify(result)+'\n');
+    return result;
   }finally{await host.close();}
 }
 if(process.argv[1]&&import.meta.url===new URL('file://'+process.argv[1]).href)
